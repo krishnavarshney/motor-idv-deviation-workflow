@@ -190,6 +190,20 @@ npm run worker:login
 npm run test:obv
 ```
 
+### Worker daemon (console-driven runs and schedules)
+
+The console never runs a browser. It queues jobs in `automation_jobs`; the daemon
+claims and executes them and fires enabled `automation_schedules`.
+
+```bash
+npm run worker:daemon
+```
+
+Run it on a host that can reach CoreHub and keep it alive with a process manager
+(systemd, pm2, a container restart policy). Optional `WORKER_ID` names the worker;
+it defaults to `<hostname>-<pid>`. The console shows the worker offline when no
+heartbeat has arrived for 2 minutes.
+
 ### Validate TypeScript
 
 ```bash
