@@ -39,6 +39,7 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
   const worker = await getWorkerStatus(supabase);
   const hasHumanDecision = decision?.decided_by != null || caseRow.referral_status === "rejected";
   const canReevaluate = can(profile?.role, "run_jobs") && caseRow.referral_status !== "processing" && !hasHumanDecision;
+  const obvUrl = typeof idv?.raw_response?.sourceUrl === "string" && /^https?:\/\//i.test(idv.raw_response.sourceUrl) ? idv.raw_response.sourceUrl : null;
 
   return (
     <>
@@ -124,9 +125,9 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
                   ["Reason", idv?.raw_response?.reasonCode ?? "—"],
                 ]}
               />
-              {idv?.raw_response?.sourceUrl && (
+              {obvUrl && (
                 <Button variant="outline" size="sm" asChild className="w-fit">
-                  <a href={idv.raw_response.sourceUrl} target="_blank" rel="noreferrer">
+                  <a href={obvUrl} target="_blank" rel="noreferrer">
                     <ExternalLink data-icon="inline-start" />
                     Open OBV result page
                   </a>
