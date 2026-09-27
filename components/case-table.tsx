@@ -14,7 +14,7 @@ export function CaseTable({ rows, emptyText = "Nothing matches yet." }: { rows: 
           <TableHead>Vehicle identity</TableHead>
           <TableHead className="text-right">Requested IDV</TableHead>
           <TableHead>Decision</TableHead>
-          <TableHead className="pr-4">Workflow</TableHead>
+          <TableHead className="hidden pr-4 2xl:table-cell">Workflow</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -36,7 +36,7 @@ export function CaseTable({ rows, emptyText = "Nothing matches yet." }: { rows: 
             <TableCell>
               <DecisionBadge status={x.referral_status} />
             </TableCell>
-            <TableCell className="pr-4 text-muted-foreground capitalize">{humanize(x.workflow_status)}</TableCell>
+            <TableCell className="hidden pr-4 text-muted-foreground capitalize 2xl:table-cell">{humanize(x.workflow_status)}</TableCell>
           </TableRow>
         ))}
         {!rows.length && <EmptyRow colSpan={5} icon={Inbox} title="No referral cases" description={emptyText} />}

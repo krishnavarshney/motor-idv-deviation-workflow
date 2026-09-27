@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -42,7 +43,7 @@ export function CommandMenu() {
     <>
       <Button
         variant="outline"
-        className="h-9 w-full max-w-sm justify-start gap-2 bg-muted/40 px-3 font-normal text-muted-foreground"
+        className="h-9 min-w-0 flex-1 shrink justify-start gap-2 bg-muted/40 px-3 font-normal text-muted-foreground md:max-w-sm"
         onClick={() => setOpen(true)}
       >
         <Search data-icon="inline-start" />
@@ -50,31 +51,33 @@ export function CommandMenu() {
         <Kbd className="ml-auto hidden sm:inline-flex">⌘K</Kbd>
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen} title="Command menu" description="Search cases or jump to a page">
-        <CommandInput placeholder="Case ID, registration, make or model…" value={query} onValueChange={setQuery} />
-        <CommandList>
-          <CommandEmpty>No matching pages.</CommandEmpty>
-          {query.trim() && (
-            <CommandGroup heading="Search">
-              <CommandItem value={`search ${query}`} onSelect={() => go(`/referrals?q=${encodeURIComponent(query.trim())}`)}>
-                <Search />
-                Search referrals for “{query.trim()}”
-              </CommandItem>
-            </CommandGroup>
-          )}
-          {NAV.map((group, i) => (
-            <div key={group.label}>
-              {(i > 0 || query.trim()) && <CommandSeparator />}
-              <CommandGroup heading={group.label}>
-                {group.items.map((item) => (
-                  <CommandItem key={item.href} value={item.title} onSelect={() => go(item.href)}>
-                    <item.icon />
-                    {item.title}
-                  </CommandItem>
-                ))}
+        <Command>
+          <CommandInput placeholder="Case ID, registration, make or model…" value={query} onValueChange={setQuery} />
+          <CommandList>
+            <CommandEmpty>No matching pages.</CommandEmpty>
+            {query.trim() && (
+              <CommandGroup heading="Search">
+                <CommandItem value={`search ${query}`} onSelect={() => go(`/referrals?q=${encodeURIComponent(query.trim())}`)}>
+                  <Search />
+                  Search referrals for “{query.trim()}”
+                </CommandItem>
               </CommandGroup>
-            </div>
-          ))}
-        </CommandList>
+            )}
+            {NAV.map((group, i) => (
+              <div key={group.label}>
+                {(i > 0 || query.trim()) && <CommandSeparator />}
+                <CommandGroup heading={group.label}>
+                  {group.items.map((item) => (
+                    <CommandItem key={item.href} value={item.title} onSelect={() => go(item.href)}>
+                      <item.icon />
+                      {item.title}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </div>
+            ))}
+          </CommandList>
+        </Command>
       </CommandDialog>
     </>
   );

@@ -88,7 +88,7 @@ export default async function Dashboard() {
           </Card>
         </div>
 
-        <Card>
+        <Card className="self-start">
           <CardHeader>
             <CardTitle>Recent audit activity</CardTitle>
             <CardAction>
