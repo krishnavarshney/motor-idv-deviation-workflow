@@ -1,0 +1,18 @@
+create or replace function public.handle_new_user() returns trigger language plpgsql security definer set search_path=public as $$begin insert into public.profiles(id,full_name)values(new.id,new.raw_user_meta_data->>'full_name')on conflict(id)do nothing;return new;end;$$;
+drop trigger if exists on_auth_user_created on auth.users;create trigger on_auth_user_created after insert on auth.users for each row execute procedure public.handle_new_user();
+drop policy if exists profiles_self on public.profiles;create policy profiles_self on public.profiles for select to authenticated using(id=auth.uid());
+drop policy if exists referrals_select on public.referral_cases;create policy referrals_select on public.referral_cases for select to authenticated using(true);
+drop policy if exists referrals_write on public.referral_cases;create policy referrals_write on public.referral_cases for all to authenticated using(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')))with check(true);
+drop policy if exists vehicle_select on public.vehicle_resolutions;create policy vehicle_select on public.vehicle_resolutions for select to authenticated using(true);
+drop policy if exists vehicle_write on public.vehicle_resolutions;create policy vehicle_write on public.vehicle_resolutions for all to authenticated using(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')))with check(true);
+drop policy if exists idv_select on public.idv_checks;create policy idv_select on public.idv_checks for select to authenticated using(true);
+drop policy if exists idv_write on public.idv_checks;create policy idv_write on public.idv_checks for all to authenticated using(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')))with check(true);
+drop policy if exists decisions_select on public.approval_decisions;create policy decisions_select on public.approval_decisions for select to authenticated using(true);
+drop policy if exists decisions_insert on public.approval_decisions;create policy decisions_insert on public.approval_decisions for insert to authenticated with check(auth.uid() is not null);
+drop policy if exists reviews_select on public.manual_reviews;create policy reviews_select on public.manual_reviews for select to authenticated using(true);
+drop policy if exists reviews_write on public.manual_reviews;create policy reviews_write on public.manual_reviews for all to authenticated using(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')))with check(true);
+drop policy if exists audit_select on public.audit_events;create policy audit_select on public.audit_events for select to authenticated using(true);
+drop policy if exists audit_insert on public.audit_events;create policy audit_insert on public.audit_events for insert to authenticated with check(actor_id is null or actor_id=auth.uid());
+revoke update,delete on public.audit_events from authenticated;
+drop policy if exists config_select on public.config_settings;create policy config_select on public.config_settings for select to authenticated using(true);
+drop policy if exists config_admin on public.config_settings;create policy config_admin on public.config_settings for update to authenticated using(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role='admin'))with check(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role='admin'));
