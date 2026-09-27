@@ -177,3 +177,9 @@
     background-image: radial-gradient(60rem 24rem at 50% -8rem, var(--glow), transparent 70%);
   }
 }
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
