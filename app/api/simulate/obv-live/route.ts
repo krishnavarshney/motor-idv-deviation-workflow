@@ -2,12 +2,16 @@ import { NextResponse } from "next/server";
 import { existsSync } from "fs";
 import { loadWorkerConfig } from "@/src/worker/config";
 import { calculateSimulatedObvSpectrum } from "@/lib/idv-simulator-engine";
+import { requireAction } from "@/lib/api-auth";
 import type { ObvBrowserResult } from "@/src/worker/obv-lookup";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  const auth = await requireAction("test_lookup");
+  if (!auth.ok) return auth.response;
+
   const started = Date.now();
   let browser: any = null;
 
