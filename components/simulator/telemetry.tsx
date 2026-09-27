@@ -50,10 +50,12 @@ export function RunBar({
   const running = status === "running";
 
   return (
-    <Card size="sm" className="sticky top-14 z-10 bg-background/80 backdrop-blur" aria-busy={running}>
+    <Card size="sm" className="relative sticky top-14 z-10 bg-background/80 backdrop-blur" aria-busy={running}>
       <div className="flex flex-col gap-3 px-(--card-spacing) sm:flex-row sm:items-center">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <span className="flex shrink-0">{running ? <Spinner className="text-info" /> : STATUS_ICON[status]}</span>
+          <span key={running ? "running" : status} className="flex shrink-0 duration-300 animate-in fade-in zoom-in-50">
+            {running ? <Spinner className="text-info" /> : STATUS_ICON[status]}
+          </span>
           <div className="relative h-5 min-w-0 flex-1 overflow-hidden" aria-live="polite">
             {/* Keyed remount replays a CSS enter animation per step; compositor-driven, so it can't stall like rAF. */}
             <div
@@ -82,6 +84,16 @@ export function RunBar({
           {actions}
         </div>
       </div>
+      {(status === "done" || status === "failed") && (
+        <span
+          key={`flash-${status}-${stepCount}`}
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-0 rounded-[inherit] duration-1000 animate-out fade-out fill-mode-forwards",
+            status === "done" ? "bg-success/10" : "bg-destructive/10",
+          )}
+        />
+      )}
       {running && <BorderBeam size={80} duration={4} colorFrom="var(--primary)" colorTo="var(--info)" />}
     </Card>
   );
