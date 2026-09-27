@@ -38,6 +38,7 @@ export interface Schedule {
 export interface StaleJob {
   id: string;
   caseIds: string[];
+  runId: string | null;
 }
 
 export interface ExecuteResult {

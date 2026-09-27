@@ -18,7 +18,8 @@ export function createDaemonDeps(supabase: SupabaseClient, workerId: string, exe
       await supabase
         .from("automation_jobs")
         .update({ status: r.status, run_id: r.runId, error: r.error, finished_at: new Date().toISOString() })
-        .eq("id", id);
+        .eq("id", id)
+        .eq("status", "running");
     },
     async dueSchedules(now) {
       const { data, error } = await supabase
@@ -30,11 +31,12 @@ export function createDaemonDeps(supabase: SupabaseClient, workerId: string, exe
       return data ?? [];
     },
     async hasActiveJob(scheduleId) {
-      const { count } = await supabase
+      const { count, error } = await supabase
         .from("automation_jobs")
         .select("id", { count: "exact", head: true })
         .eq("schedule_id", scheduleId)
         .in("status", ["queued", "running"]);
+      if (error) throw new Error(`Checking active job failed: ${error.message}`);
       return (count ?? 0) > 0;
     },
     async enqueue(job) {
@@ -42,10 +44,11 @@ export function createDaemonDeps(supabase: SupabaseClient, workerId: string, exe
       if (error) throw new Error(`Enqueue failed: ${error.message}`);
     },
     async advanceSchedule(id, nextRun, ranAt) {
-      await supabase
+      const { error } = await supabase
         .from("automation_schedules")
         .update({ next_run_at: nextRun.toISOString(), ...(ranAt ? { last_run_at: ranAt.toISOString() } : {}) })
         .eq("id", id);
+      if (error) throw new Error(`Advancing schedule failed: ${error.message}`);
     },
     async logScheduleSkipped(id) {
       await supabase.from("audit_events").insert({
@@ -58,12 +61,13 @@ export function createDaemonDeps(supabase: SupabaseClient, workerId: string, exe
     async staleJobs(cutoff) {
       const { data } = await supabase
         .from("automation_jobs")
-        .select("id,params,progress")
+        .select("id,params,progress,run_id")
         .eq("status", "running")
         .lt("heartbeat_at", cutoff.toISOString());
       return (data ?? []).map((j) => ({
         id: j.id as string,
         caseIds: [...new Set([...(j.params?.case_ids ?? []), ...(j.progress?.case_ids ?? [])])] as string[],
+        runId: (j.run_id as string | null) ?? null,
       }));
     },
     async failStaleJob(job) {
@@ -71,6 +75,12 @@ export function createDaemonDeps(supabase: SupabaseClient, workerId: string, exe
         .from("automation_jobs")
         .update({ status: "failed", error: "stale_heartbeat", finished_at: new Date().toISOString() })
         .eq("id", job.id);
+      if (job.runId) {
+        await supabase
+          .from("automation_runs")
+          .update({ status: "failed", finished_at: new Date().toISOString(), error_summary: "stale_heartbeat" })
+          .eq("id", job.runId);
+      }
       if (job.caseIds.length) {
         await supabase
           .from("referral_cases")

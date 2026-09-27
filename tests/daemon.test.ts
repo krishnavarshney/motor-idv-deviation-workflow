@@ -87,7 +87,7 @@ async function main() {
   {
     const now = new Date("2026-09-28T04:00:00Z");
     let cutoff: Date | null = null;
-    const stale = { id: "job-9", caseIds: ["c1"] };
+    const stale = { id: "job-9", caseIds: ["c1"], runId: "run-9" };
     const { deps, calls } = fake({
       staleJobs: async (c) => {
         cutoff = c;
