@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
-import { createClient } from "@/lib/supabase/server";
+import { requirePageAction } from "@/lib/api-auth";
 import { Button } from "@/components/ui/button";
 import { DecisionBadge } from "@/components/status";
 import { PageHeader } from "@/components/console";
@@ -12,7 +12,7 @@ export const metadata = { title: "Review case" };
 
 export default async function ReviewDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const supabase = await createClient();
+  const { supabase } = await requirePageAction("review");
   const { data: review } = await supabase.from("manual_reviews").select("*, referral_cases(*)").eq("id", id).maybeSingle();
   if (!review) notFound();
   const caseId = review.case_id;

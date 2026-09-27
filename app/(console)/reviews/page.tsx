@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ChevronRight, ClipboardCheck, UserCheck } from "lucide-react";
-import { createClient } from "@/lib/supabase/server";
+import { requirePageAction } from "@/lib/api-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { loadDecisionConfig } from "@/src/server/idv-config";
 export const metadata = { title: "Manual review" };
 
 export default async function Reviews() {
-  const supabase = await createClient();
+  const { supabase } = await requirePageAction("review");
   const [{ data }, config] = await Promise.all([
     supabase
       .from("manual_reviews")
