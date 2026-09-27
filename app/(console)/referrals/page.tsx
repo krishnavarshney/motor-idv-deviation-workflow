@@ -1,15 +1,23 @@
 import Link from "next/link";
-import { FlaskConical, Search } from "lucide-react";
+import { Bot, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { CaseTable } from "@/components/case-table";
 import { PageHeader } from "@/components/console";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { EvaluateButton, FetchButton } from "@/components/job-buttons";
+import { JobProgress } from "@/components/job-progress";
+import { LiveRefresh } from "@/components/live-refresh";
+import { getSessionProfile } from "@/lib/api-auth";
+import { can } from "@/lib/authz";
+import { getWorkerStatus } from "@/lib/worker-status";
 
 export const metadata = { title: "Referral queue" };
 
 const STATUSES = ["received", "processing", "approved", "manual_review", "rejected", "failed"] as const;
+const LABELS: Partial<Record<(typeof STATUSES)[number], string>> = { processing: "Evaluating", approved: "Auto-approved" };
 
 export default async function Referrals({ searchParams }: { searchParams: Promise<{ status?: string; q?: string }> }) {
   const p = await searchParams;
@@ -21,8 +29,18 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
   let query = supabase.from("referral_cases").select("*").order("received_at", { ascending: false }).limit(100);
   if (status) query = query.eq("referral_status", status);
   if (q) query = query.or(["external_case_id", "registration_number", "make_raw", "model_raw"].map((c) => `${c}.ilike.%${q}%`).join(","));
-  const { data } = await query;
+  const [{ data }, worker, profile, { data: activeJobs }] = await Promise.all([
+    query,
+    getWorkerStatus(supabase),
+    getSessionProfile(supabase),
+    supabase.from("automation_jobs").select("id,type,status,progress").in("status", ["queued", "running"]).order("created_at"),
+  ]);
   const rows = data ?? [];
+  const jobs = activeJobs ?? [];
+  const canRun = can(profile?.role, "run_jobs");
+  const offline = worker.online ? null : "Worker offline";
+  const fetchReason = offline ?? (jobs.some((j) => j.type === "fetch") ? "Fetch already in progress" : null);
+  const selectable = canRun && (status === "received" || status === "failed");
 
   const href = (s?: string) => {
     const sp = new URLSearchParams();
@@ -38,14 +56,7 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
         eyebrow="Operations"
         title="Referral queue"
         description="Every case is traceable from intake through valuation and decision."
-        actions={
-          <Button asChild>
-            <Link href="/simulate">
-              <FlaskConical data-icon="inline-start" />
-              Run controlled test
-            </Link>
-          </Button>
-        }
+        actions={canRun ? <FetchButton disabledReason={fetchReason} /> : undefined}
       />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -62,17 +73,37 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
           {[undefined, ...STATUSES].map((s) => (
             <Button key={s ?? "all"} size="sm" variant={s === status ? "secondary" : "ghost"} asChild className="capitalize">
               <Link href={href(s)} aria-current={s === status ? "page" : undefined}>
-                {s ? s.replaceAll("_", " ") : "All"}
+                {s ? (LABELS[s] ?? s.replaceAll("_", " ")) : "All"}
               </Link>
             </Button>
           ))}
         </nav>
       </div>
 
+      <LiveRefresh tables={["referral_cases", "automation_jobs"]} />
+      {jobs.length > 0 && (
+        <Alert>
+          <Bot />
+          <AlertTitle>
+            {jobs.length === 1 ? "Automation job in progress" : `${jobs.length} automation jobs in progress`}
+          </AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            <JobProgress progress={jobs[0].progress} status={jobs[0].status} />
+            <Link href="/automation" className="w-fit text-sm underline underline-offset-4">
+              View runs
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
       <Card className="pb-0">
         <CardHeader>
           <CardTitle>{rows.length} cases</CardTitle>
           <CardDescription>{rows.length === 100 ? "Showing newest 100 — refine the search to narrow" : "Newest first"}</CardDescription>
+          {canRun && status === "received" && rows.length > 0 && (
+            <CardAction>
+              <EvaluateButton caseIds={[]} all label="Evaluate all received" variant="outline" disabledReason={offline} />
+            </CardAction>
+          )}
           {(q || status) && (
             <CardAction>
               <Button variant="ghost" size="sm" asChild>
@@ -81,7 +112,7 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
             </CardAction>
           )}
         </CardHeader>
-        <CaseTable rows={rows} emptyText="No cases match these filters." />
+        <CaseTable rows={rows} emptyText="No cases match these filters." selectable={selectable} disabledReason={offline} />
       </Card>
     </>
   );

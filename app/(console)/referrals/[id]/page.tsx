@@ -7,6 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DecisionBadge } from "@/components/status";
 import { DetailList, PageHeader } from "@/components/console";
 import { DecisionEvidence, VehicleCard } from "@/components/decision-evidence";
+import { EvaluateButton } from "@/components/job-buttons";
+import { LiveRefresh } from "@/components/live-refresh";
+import { getSessionProfile } from "@/lib/api-auth";
+import { can } from "@/lib/authz";
 import { dateTime, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -28,8 +32,12 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
 
   if (!caseRow) notFound();
 
+  const profile = await getSessionProfile(supabase);
+  const canReevaluate = can(profile?.role, "run_jobs") && caseRow.referral_status !== "processing";
+
   return (
     <>
+      <LiveRefresh tables={["referral_cases"]} />
       <div className="flex flex-col gap-2">
         <Button variant="ghost" size="sm" asChild className="w-fit">
           <Link href="/referrals">
@@ -47,6 +55,7 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
                   <Link href={"/reviews/" + review.id}>Open review</Link>
                 </Button>
               )}
+              {canReevaluate && <EvaluateButton caseIds={[caseRow.id]} label="Re-evaluate" variant="outline" />}
               <DecisionBadge status={caseRow.referral_status} className="h-7 px-3 text-sm" />
             </>
           }
