@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Bot, Inbox, Search, TriangleAlert } from "lucide-react";
+import { Bot, Inbox, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,7 +7,8 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { CaseTable } from "@/components/case-table";
 import { PageHeader } from "@/components/console";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { EvaluateButton, FetchButton } from "@/components/job-buttons";
+import { EvaluateButton } from "@/components/job-buttons";
+import { FetchRunBar } from "@/components/fetch-run-bar";
 import { JobProgress } from "@/components/job-progress";
 import { LiveRefresh } from "@/components/live-refresh";
 import { getSessionProfile } from "@/lib/api-auth";
@@ -41,12 +42,12 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
     query,
     getWorkerStatus(supabase),
     getSessionProfile(supabase),
-    supabase.from("automation_jobs").select("id,type,status,progress").in("status", ["queued", "running"]).order("created_at"),
+    supabase.from("automation_jobs").select("id,type,status,progress,started_at,finished_at,error").in("status", ["queued", "running"]).order("created_at"),
     supabase
       .from("automation_jobs")
-      .select("id,status,error")
+      .select("id,type,status,progress,started_at,finished_at,error")
       .eq("type", "fetch")
-      .in("status", ["succeeded", "failed"])
+      .in("status", ["succeeded", "failed", "cancelled"])
       .order("finished_at", { ascending: false })
       .limit(1),
     supabase.from("automation_runs").select("id").order("started_at", { ascending: false }).limit(1).maybeSingle(),
@@ -61,7 +62,8 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
   const lastFetchJob = (lastFetchJobs ?? [])[0] ?? null;
   const canRun = can(profile?.role, "run_jobs");
   const offline = worker.online ? null : "Worker offline";
-  const fetchReason = offline ?? (jobs.some((j) => j.type === "fetch") ? "Fetch already in progress" : null);
+  const activeFetch = jobs.find((j) => j.type === "fetch") ?? null;
+  const otherJobs = jobs.filter((j) => j.type !== "fetch");
   const selectable = canRun && (status === "received" || status === "failed");
 
   const href = (s?: string, view?: string) => {
@@ -85,8 +87,10 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
         eyebrow="Operations"
         title="Referral queue"
         description="Every case is traceable from intake through valuation and decision."
-        actions={canRun ? <FetchButton disabledReason={fetchReason} /> : undefined}
       />
+
+      {/* Live CoreHub fetch: same run bar as the simulator, driven by the worker's job progress. */}
+      <FetchRunBar active={activeFetch} last={lastFetchJob} disabledReason={canRun ? offline : false} />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <form className="w-full lg:max-w-md">
@@ -110,26 +114,14 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
       </div>
 
       <LiveRefresh tables={["referral_cases", "automation_jobs"]} />
-      {lastFetchJob?.status === "failed" && (
-        <Alert variant="destructive">
-          <TriangleAlert />
-          <AlertTitle>Last CoreHub fetch failed</AlertTitle>
-          <AlertDescription className="flex flex-col gap-2">
-            <span>{lastFetchJob.error || "Unknown error"}</span>
-            <Link href={`/automation/jobs/${lastFetchJob.id}`} className="w-fit text-sm underline underline-offset-4">
-              View job
-            </Link>
-          </AlertDescription>
-        </Alert>
-      )}
-      {jobs.length > 0 && (
+      {otherJobs.length > 0 && (
         <Alert>
           <Bot />
           <AlertTitle>
-            {jobs.length === 1 ? "Automation job in progress" : `${jobs.length} automation jobs in progress`}
+            {otherJobs.length === 1 ? "Evaluation in progress" : `${otherJobs.length} automation jobs in progress`}
           </AlertTitle>
           <AlertDescription className="flex flex-col gap-2">
-            <JobProgress progress={jobs[0].progress} status={jobs[0].status} />
+            <JobProgress progress={otherJobs[0].progress} status={otherJobs[0].status} />
             <Link href="/automation" className="w-fit text-sm underline underline-offset-4">
               View runs
             </Link>

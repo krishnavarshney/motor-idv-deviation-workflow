@@ -349,10 +349,18 @@ export async function scrapeCorehub(
   page: Page,
   context: BrowserContext,
   config: WorkerConfig,
-  runId: string
+  runId: string,
+  /** Optional progress hook, called at each real checkpoint (label is user-facing). */
+  onStep?: (label: string) => void | Promise<void>
 ): Promise<CorehubScrapeResult> {
   const evidence: EvidenceArtifact[] = [];
   let sessionReused = false;
+  // Progress reporting must never break the scrape.
+  const step = async (label: string) => {
+    try {
+      await onStep?.(label);
+    } catch {}
+  };
 
   // ── Try using saved session ────────────────────────────────────
   const savedState = loadSavedSession(config.sessionStoragePath);
@@ -370,6 +378,7 @@ export async function scrapeCorehub(
   // Navigate to referral page — if session is valid we'll land there directly
   try {
     console.log("🔗 Navigating to Referral tab...");
+    await step("Opening CoreHub referral tab");
     await page.goto(config.corehubReferralUrl, {
       waitUntil: "domcontentloaded",
       timeout: config.navigationTimeoutMs,
@@ -389,6 +398,7 @@ export async function scrapeCorehub(
 
   if (alreadyAuthed) {
     console.log("✅ Saved session is valid — skipping login");
+    await step("Reusing saved CoreHub session");
     sessionReused = true;
     evidence.push(
       await captureEvidence(page, "corehub_session_reused", runId)
@@ -396,6 +406,7 @@ export async function scrapeCorehub(
   } else {
     // Session expired or missing — do a fresh login
     console.log("🔄 Session expired or missing — performing fresh login");
+    await step("Signing in to CoreHub");
     const loggedIn = await loginToCorehub(page, config, runId, evidence);
 
     if (!loggedIn) {
@@ -433,6 +444,7 @@ export async function scrapeCorehub(
   );
 
   // ── Extract referral rows ──────────────────────────────────────
+  await step("Reading referral rows");
   const referrals = await scrapeReferralTable(
     page,
     config.corehubSelectors,

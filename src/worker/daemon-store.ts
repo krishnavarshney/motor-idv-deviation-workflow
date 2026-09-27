@@ -109,8 +109,18 @@ export async function executeJob(supabase: SupabaseClient, job: Job): Promise<Ex
   const runId = await createRun(supabase, config);
   await supabase.from("automation_jobs").update({ run_id: runId }).eq("id", job.id);
 
+  // `step` counts distinct checkpoints so the UI can show "Step n" without a fixed step list.
+  let stepNo = 0;
+  let lastLabel = "";
   const progress = async (p: { current_step: string; done: number; total: number; case_ids?: string[] }) => {
-    await supabase.from("automation_jobs").update({ progress: p, heartbeat_at: new Date().toISOString() }).eq("id", job.id);
+    if (p.current_step !== lastLabel) {
+      stepNo++;
+      lastLabel = p.current_step;
+    }
+    await supabase
+      .from("automation_jobs")
+      .update({ progress: { ...p, step: stepNo }, heartbeat_at: new Date().toISOString() })
+      .eq("id", job.id);
   };
 
   const counts = emptyCounts();
@@ -126,14 +136,14 @@ export async function executeJob(supabase: SupabaseClient, job: Job): Promise<Ex
       if (reconcileError) counts.errors.push(reconcileError);
     }
 
+    await progress({ current_step: "Launching browser", done: 0, total: 0 });
     const opened = await openSession(supabase, config, runId, decisionConfig);
     close = opened.close;
     const s = opened.session;
 
     let caseIds: string[] = [];
     if (job.type === "fetch") {
-      await progress({ current_step: "Fetching CoreHub referrals", done: 0, total: 0 });
-      const fetched = await fetchReferrals(s);
+      const fetched = await fetchReferrals(s, (label, done = 0, total = 0) => progress({ current_step: label, done, total }));
       counts.casesDiscovered = fetched.discovered;
       counts.casesNew = fetched.newCaseIds.length;
       if (job.params.then_evaluate) caseIds = fetched.newCaseIds;

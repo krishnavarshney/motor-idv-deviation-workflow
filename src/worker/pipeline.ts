@@ -102,10 +102,17 @@ export async function runReconcile(
   }
 }
 
-export async function fetchReferrals(s: Session): Promise<{ discovered: number; newCaseIds: string[] }> {
+export type StepReporter = (label: string, done?: number, total?: number) => void | Promise<void>;
+
+export async function fetchReferrals(s: Session, onStep?: StepReporter): Promise<{ discovered: number; newCaseIds: string[] }> {
+  const step = async (label: string, done?: number, total?: number) => {
+    try {
+      await onStep?.(label, done, total);
+    } catch {}
+  };
   const page = await s.context.newPage();
   try {
-    const result = await scrapeCorehub(page, s.context, s.config, s.runId);
+    const result = await scrapeCorehub(page, s.context, s.config, s.runId, (label) => step(label));
     if (!result.success) {
       const error = result.error ?? "CoreHub scrape failed";
       await s.supabase.from("audit_events").insert({
@@ -126,7 +133,9 @@ export async function fetchReferrals(s: Session): Promise<{ discovered: number; 
     if (knownError) throw new Error(`Failed to check existing referrals: ${knownError.message}`);
     const knownIds = new Set((known ?? []).map((k) => k.external_case_id as string));
     const opened: CorehubReferral[] = [];
-    for (const listed of result.referrals.filter((r) => !knownIds.has(r.externalCaseId))) {
+    const fresh = result.referrals.filter((r) => !knownIds.has(r.externalCaseId));
+    for (const [i, listed] of fresh.entries()) {
+      await step(`Opening referral ${i + 1} of ${fresh.length} · ${listed.externalCaseId}`, i, fresh.length);
       try {
         opened.push(await openReferral(page, s.config, listed));
       } catch (err) {
@@ -137,6 +146,7 @@ export async function fetchReferrals(s: Session): Promise<{ discovered: number; 
     }
     if (!opened.length) return { discovered: result.referrals.length, newCaseIds: [] };
 
+    await step(`Saving ${opened.length} new referral${opened.length === 1 ? "" : "s"}`, fresh.length, fresh.length);
     // ON CONFLICT DO NOTHING: a referral stored meanwhile by another run is skipped.
     const { data, error } = await s.supabase
       .from("referral_cases")
