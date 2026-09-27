@@ -1,0 +1,5 @@
+import {supabase} from "@/integrations/supabase/client";
+export async function listReferralCases(){const {data,error}=await supabase.from("referral_cases").select("*").order("received_at",{ascending:false});if(error)throw error;return data??[]}
+export async function listManualReviews(){const {data,error}=await supabase.from("manual_reviews").select("*").order("priority",{ascending:true}).order("created_at",{ascending:true});if(error)throw error;return data??[]}
+export async function listAuditEvents(caseId?:string){let q=supabase.from("audit_events").select("*").order("created_at",{ascending:false});if(caseId)q=q.eq("case_id",caseId);const {data,error}=await q;if(error)throw error;return data??[]}
+export async function getConfig(){const {data,error}=await supabase.from("config_settings").select("*").eq("is_active",true);if(error)throw error;return data??[]}
