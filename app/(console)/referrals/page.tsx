@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Bot, Search } from "lucide-react";
+import { Bot, Search, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,14 +29,22 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
   let query = supabase.from("referral_cases").select("*").order("received_at", { ascending: false }).limit(100);
   if (status) query = query.eq("referral_status", status);
   if (q) query = query.or(["external_case_id", "registration_number", "make_raw", "model_raw"].map((c) => `${c}.ilike.%${q}%`).join(","));
-  const [{ data }, worker, profile, { data: activeJobs }] = await Promise.all([
+  const [{ data }, worker, profile, { data: activeJobs }, { data: lastFetchJobs }] = await Promise.all([
     query,
     getWorkerStatus(supabase),
     getSessionProfile(supabase),
     supabase.from("automation_jobs").select("id,type,status,progress").in("status", ["queued", "running"]).order("created_at"),
+    supabase
+      .from("automation_jobs")
+      .select("id,status,error")
+      .eq("type", "fetch")
+      .in("status", ["succeeded", "failed"])
+      .order("finished_at", { ascending: false })
+      .limit(1),
   ]);
   const rows = data ?? [];
   const jobs = activeJobs ?? [];
+  const lastFetchJob = (lastFetchJobs ?? [])[0] ?? null;
   const canRun = can(profile?.role, "run_jobs");
   const offline = worker.online ? null : "Worker offline";
   const fetchReason = offline ?? (jobs.some((j) => j.type === "fetch") ? "Fetch already in progress" : null);
@@ -81,6 +89,18 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
       </div>
 
       <LiveRefresh tables={["referral_cases", "automation_jobs"]} />
+      {lastFetchJob?.status === "failed" && (
+        <Alert variant="destructive">
+          <TriangleAlert />
+          <AlertTitle>Last CoreHub fetch failed</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            <span>{lastFetchJob.error || "Unknown error"}</span>
+            <Link href={`/automation/jobs/${lastFetchJob.id}`} className="w-fit text-sm underline underline-offset-4">
+              View job
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
       {jobs.length > 0 && (
         <Alert>
           <Bot />
@@ -99,16 +119,16 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
         <CardHeader>
           <CardTitle>{rows.length} cases</CardTitle>
           <CardDescription>{rows.length === 100 ? "Showing newest 100 — refine the search to narrow" : "Newest first"}</CardDescription>
-          {canRun && status === "received" && rows.length > 0 && (
-            <CardAction>
-              <EvaluateButton caseIds={[]} all label="Evaluate all received" variant="outline" disabledReason={offline} />
-            </CardAction>
-          )}
-          {(q || status) && (
-            <CardAction>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/referrals">Clear filters</Link>
-              </Button>
+          {((canRun && status === "received" && rows.length > 0) || q || status) && (
+            <CardAction className="flex gap-2">
+              {canRun && status === "received" && rows.length > 0 && (
+                <EvaluateButton caseIds={[]} all label="Evaluate all received" variant="outline" disabledReason={offline} />
+              )}
+              {(q || status) && (
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/referrals">Clear filters</Link>
+                </Button>
+              )}
             </CardAction>
           )}
         </CardHeader>
