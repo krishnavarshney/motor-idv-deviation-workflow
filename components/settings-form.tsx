@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group";
-import { Spinner } from "@/components/ui/spinner";
+import { StatefulButton, type ButtonState } from "@/components/motion/button/stateful";
 
 const META: Record<string, { label: string; unit: string; hint: string; prefix?: boolean }> = {
   idv_abs_tolerance: { label: "Absolute IDV tolerance", unit: "₹", prefix: true, hint: "Approve when |requested − OBV| is within this amount." },
@@ -22,6 +22,7 @@ export function SettingsForm({ initial }: { initial: Record<string, number> }) {
   const router = useRouter();
   const [v, setV] = useState(initial);
   const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<ButtonState>("idle");
   const dirty = Object.keys(v).some((k) => v[k] !== initial[k]);
 
   async function submit(e: FormEvent) {
@@ -30,6 +31,8 @@ export function SettingsForm({ initial }: { initial: Record<string, number> }) {
     const r = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(v) });
     const d = await r.json().catch(() => ({}));
     setSaving(false);
+    setResult(r.ok ? "success" : "error");
+    setTimeout(() => setResult("idle"), 1600);
     if (!r.ok) return notify.error("Unable to save configuration", { description: d.error });
     notify.success("Configuration saved", { description: "Change recorded in the audit trail.", href: "/settings" });
     router.refresh();
@@ -80,10 +83,17 @@ export function SettingsForm({ initial }: { initial: Record<string, number> }) {
           <Button type="button" variant="ghost" disabled={!dirty || saving} onClick={() => setV(initial)}>
             Reset
           </Button>
-          <Button type="submit" disabled={!dirty || saving}>
-            {saving && <Spinner data-icon="inline-start" />}
+          <StatefulButton
+            type="submit"
+            size="sm"
+            state={saving ? "loading" : result}
+            loadingText="Saving…"
+            successText="Saved"
+            errorText="Not saved"
+            disabled={(!dirty && result === "idle") || saving}
+          >
             Save configuration
-          </Button>
+          </StatefulButton>
         </CardFooter>
       </Card>
     </form>

@@ -164,6 +164,7 @@
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
   }
 }
@@ -182,4 +183,50 @@
   html {
     scroll-behavior: smooth;
   }
+}
+
+/* App-wide entrance motion (same language as the simulator): content rises in with a
+   soft blur. Pure CSS so it can't stall in throttled tabs; reduced motion clamps it above. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(3px);
+  }
+}
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@layer components {
+  .page-stagger > * {
+    animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .page-stagger > :nth-child(2) { animation-delay: 60ms; }
+  .page-stagger > :nth-child(3) { animation-delay: 120ms; }
+  .page-stagger > :nth-child(4) { animation-delay: 180ms; }
+  .page-stagger > :nth-child(n + 5) { animation-delay: 240ms; }
+
+  /* Cards (incl. streamed Suspense sections) rise in whenever they mount. */
+  [data-slot="card"] {
+    animation: rise-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* Table rows cascade in on mount (first 12 staggered, the rest together). */
+  [data-slot="table-body"] > tr {
+    animation: row-in 0.35s ease-out both;
+  }
+  [data-slot="table-body"] > tr:nth-child(2) { animation-delay: 25ms; }
+  [data-slot="table-body"] > tr:nth-child(3) { animation-delay: 50ms; }
+  [data-slot="table-body"] > tr:nth-child(4) { animation-delay: 75ms; }
+  [data-slot="table-body"] > tr:nth-child(5) { animation-delay: 100ms; }
+  [data-slot="table-body"] > tr:nth-child(6) { animation-delay: 125ms; }
+  [data-slot="table-body"] > tr:nth-child(7) { animation-delay: 150ms; }
+  [data-slot="table-body"] > tr:nth-child(8) { animation-delay: 175ms; }
+  [data-slot="table-body"] > tr:nth-child(9) { animation-delay: 200ms; }
+  [data-slot="table-body"] > tr:nth-child(10) { animation-delay: 225ms; }
+  [data-slot="table-body"] > tr:nth-child(11) { animation-delay: 250ms; }
+  [data-slot="table-body"] > tr:nth-child(n + 12) { animation-delay: 275ms; }
 }

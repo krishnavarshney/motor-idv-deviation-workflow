@@ -29,7 +29,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
             <ThemeToggle />
           </div>
         </header>
-        <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-4 md:p-6">{children}</div>
+        <div className="page-stagger mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-4 md:p-6">{children}</div>
       </SidebarInset>
       <Toaster />
     </SidebarProvider>
