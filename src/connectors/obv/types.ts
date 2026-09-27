@@ -1,0 +1,3 @@
+export type ObvLookupInput={registrationNumber?:string|null;make:string;model:string;variant:string;fuelType?:string|null;cc?:number|null};
+export type ObvLookupResult={provider:"obv";success:boolean;vehicle?:{make:string;model:string;variant:string};idv?:number;currency:"INR";providerRequestId?:string;latencyMs:number;reasonCode?:string;raw?:unknown};
+export interface ObvConnector{lookup(input:ObvLookupInput):Promise<ObvLookupResult>}
