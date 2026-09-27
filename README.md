@@ -102,6 +102,10 @@ The Next.js application provides:
 
 Supabase Auth and role-aware access controls protect the console.
 
+### Invites and password reset
+
+In Supabase → Authentication → URL Configuration, set Site URL to the console URL. In Email Templates, set the Invite user link to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next=/account?welcome=1` and Reset password to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/account`. The console also needs `SUPABASE_SERVICE_ROLE_KEY` (server-only) for queuing jobs and Team administration.
+
 ## Data model
 
 Supabase PostgreSQL is the durable system of record. Core entities include:

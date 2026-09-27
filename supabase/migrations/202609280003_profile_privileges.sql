@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 010: profile privilege hardening
+-- Migration 202609280003: profile privilege hardening
 -- profiles_update_self allowed any user to set their own role (including admin).
 -- =============================================================================
 
