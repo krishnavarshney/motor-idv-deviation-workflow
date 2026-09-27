@@ -31,17 +31,15 @@
   "include": [
     "next-env.d.ts",
     ".next/types/**/*.ts",
-    "**/*.ts",
-    "**/*.tsx"
-  ],
-  "exclude": [
-    "node_modules",
-    "vite.config.ts",
-    "src/App.tsx",
-    "src/routes/**/*",
-    "src/integrations/**/*",
-    "src/lib/auth.ts",
-    "src/lib/repositories.ts",
-    "src/lib/realtime.ts"
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "src/domain/**/*.ts",
+    "src/server/**/*.ts",
+    "src/workflow/**/*.ts",
+    "src/connectors/**/*.ts",
+    "src/lib/supabase/**/*.ts",
+    "proxy.ts"
   ]
 }
