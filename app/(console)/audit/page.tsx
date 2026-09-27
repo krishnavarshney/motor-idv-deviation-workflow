@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { AlertCircle, AlertTriangle, FileClock, Info } from "lucide-react";
+import { requirePageAction } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ const SEVERITY = {
 export default async function Audit({ searchParams }: { searchParams: Promise<{ severity?: string }> }) {
   const sp = await searchParams;
   const severity = SEVERITIES.find((s) => s === sp.severity);
+  await requirePageAction("audit");
   return (
     <SectionProgress total={1}>
       <PageHeader

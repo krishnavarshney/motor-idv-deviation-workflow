@@ -102,6 +102,10 @@ The Next.js application provides:
 
 Supabase Auth and role-aware access controls protect the console.
 
+### Invites and password reset
+
+In Supabase → Authentication → URL Configuration, set Site URL to the console URL. In Email Templates, set the Invite user link to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next=/account?welcome=1` and Reset password to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/account`. The console also needs `SUPABASE_SERVICE_ROLE_KEY` (server-only) for queuing jobs and Team administration.
+
 ## Data model
 
 Supabase PostgreSQL is the durable system of record. Core entities include:
@@ -143,6 +147,9 @@ SUPABASE_SERVICE_ROLE_KEY
 AUTOMATION_DRY_RUN=true|false (default: true)
 PLAYWRIGHT_HEADLESS=true|false (default: true)
 ```
+
+On the console (Vercel), `AUTOMATION_DRY_RUN` decides dry-run for jobs started
+from the UI; on the daemon host it only affects `npm run worker` CLI runs.
 
 Never commit passwords, service-role keys, session cookies, browser state, customer PII or production screenshots.
 
@@ -189,6 +196,20 @@ npm run worker:login
 # Standalone OBV test lookup using vehicle details
 npm run test:obv
 ```
+
+### Worker daemon (console-driven runs and schedules)
+
+The console never runs a browser. It queues jobs in `automation_jobs`; the daemon
+claims and executes them and fires enabled `automation_schedules`.
+
+```bash
+npm run worker:daemon
+```
+
+Run it on a host that can reach CoreHub and keep it alive with a process manager
+(systemd, pm2, a container restart policy). Optional `WORKER_ID` names the worker;
+it defaults to `<hostname>-<pid>`. The console shows the worker offline when no
+heartbeat has arrived for 2 minutes.
 
 ### Validate TypeScript
 

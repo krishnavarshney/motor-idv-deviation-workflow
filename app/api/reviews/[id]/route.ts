@@ -1,48 +1,14 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireAction } from "@/lib/api-auth";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Ensure user has valid profile and underwriter/admin permission
-  let { data: profile } = await supabase
-    .from("profiles")
-    .select("role,is_active")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (!profile) {
-    const { data: newProfile } = await supabase
-      .from("profiles")
-      .upsert({
-        id: user.id,
-        full_name: user.email?.split("@")[0] ?? "Underwriter",
-        role: "underwriter",
-        is_active: true,
-      })
-      .select("role,is_active")
-      .single();
-    profile = newProfile;
-  } else if (profile.role === "operator") {
-    // Elevate operator to underwriter in development/testing
-    await supabase.from("profiles").update({ role: "underwriter" }).eq("id", user.id);
-    profile.role = "underwriter";
-  }
-
-  if (!profile?.is_active) {
-    return NextResponse.json({ error: "User account is inactive" }, { status: 403 });
-  }
+  const auth = await requireAction("review");
+  if (!auth.ok) return auth.response;
+  const { supabase, user } = auth;
 
   const body = await request.json();
   const decision = body.decision;
