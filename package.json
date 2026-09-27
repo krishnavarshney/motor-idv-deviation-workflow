@@ -1,6 +1,27 @@
 {
-  "name":"motor-idv-deviation-workflow","version":"0.1.0","private":true,
-  "scripts":{"dev":"next dev","build":"next build","start":"next start","lint":"next lint","test":"node --experimental-strip-types tests/decision-engine.test.ts && node --experimental-strip-types tests/vehicle-resolution.test.ts && node --experimental-strip-types tests/workflow.test.ts"},
-  "dependencies":{"@supabase/ssr":"^0.7.0","@supabase/supabase-js":"^2.57.0","lucide-react":"^0.575.0","next":"^16.0.0","react":"^19.2.0","react-dom":"^19.2.0"},
-  "devDependencies":{"@types/node":"^22.0.0","@types/react":"^19.2.0","@types/react-dom":"^19.2.0","typescript":"^5.8.3"}
+  "name": "motor-idv-deviation-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "tsc --noEmit",
+    "test": "tsx tests/decision-engine.test.ts && tsx tests/vehicle-resolution.test.ts && tsx tests/workflow.test.ts"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.57.0",
+    "lucide-react": "^0.575.0",
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.8.3",
+    "tsx": "^4.19.0"
+  }
 }
