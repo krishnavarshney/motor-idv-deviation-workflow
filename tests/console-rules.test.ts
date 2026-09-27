@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { can } from "../lib/authz";
+import { activeHref, visibleNav } from "../components/nav";
 import { MAX_CASES_PER_JOB, parseJobRequest } from "../lib/jobs";
 import { isWorkerOnline } from "../lib/worker-status";
 
@@ -35,6 +36,17 @@ function main() {
   assert.equal(isWorkerOnline("2026-09-27T11:59:00Z", now), true);
   assert.equal(isWorkerOnline("2026-09-27T11:57:59Z", now), false);
   assert.equal(isWorkerOnline(null, now), false);
+
+  // Sidebar visibility
+  const titles = (role: string | null) => visibleNav(role).flatMap((g) => g.items.map((i) => i.title));
+  assert.deepEqual(titles("operator"), ["Overview", "Referrals", "Runs", "Schedules"]);
+  assert.deepEqual(titles("underwriter"), ["Overview", "Referrals", "Review queue", "Runs", "Schedules"]);
+  assert.deepEqual(titles("auditor"), ["Overview", "Referrals", "Runs", "Schedules", "Audit log"]);
+  assert.deepEqual(titles("admin"), ["Overview", "Referrals", "Review queue", "Runs", "Schedules", "Decision rules", "Team", "Audit log"]);
+  assert.deepEqual(visibleNav(null), []);
+  assert.equal(activeHref("/automation/schedules"), "/automation/schedules");
+  assert.equal(activeHref("/automation/jobs/123"), "/automation");
+  assert.equal(activeHref("/"), "/");
 
   console.log("console rules tests passed");
 }

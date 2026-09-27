@@ -47,9 +47,9 @@ export default async function Dashboard() {
         title="IDV decision control center"
         description="Referral intake, vehicle resolution, valuation evidence and exception handling in one workspace."
         actions={
-          <Button asChild>
-            <Link href="/simulate">
-              Run controlled test <ArrowUpRight data-icon="inline-end" />
+          <Button asChild variant="outline">
+            <Link href="/automation">
+              View runs <ArrowUpRight data-icon="inline-end" />
             </Link>
           </Button>
         }

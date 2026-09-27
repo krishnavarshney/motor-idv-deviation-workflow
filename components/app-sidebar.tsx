@@ -11,6 +11,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
@@ -25,9 +26,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { NAV, activeHref } from "@/components/nav";
+import { activeHref, visibleNav } from "@/components/nav";
+import type { Role } from "@/lib/authz";
 
-export function AppSidebar({ userEmail }: { userEmail: string }) {
+export function AppSidebar({
+  userEmail,
+  fullName,
+  role,
+  badges,
+}: {
+  userEmail: string;
+  fullName: string | null;
+  role: Role | null;
+  badges: Record<string, number>;
+}) {
   const pathname = usePathname();
   const active = activeHref(pathname);
   const initials = userEmail.slice(0, 2).toUpperCase();
@@ -52,7 +64,7 @@ export function AppSidebar({ userEmail }: { userEmail: string }) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        {NAV.map((group) => (
+        {visibleNav(role).map((group) => (
           <SidebarGroup key={group.label}>
             <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
             <SidebarMenu>
@@ -64,6 +76,7 @@ export function AppSidebar({ userEmail }: { userEmail: string }) {
                       <span>{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
+                  {badges[item.href] ? <SidebarMenuBadge>{badges[item.href]}</SidebarMenuBadge> : null}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
