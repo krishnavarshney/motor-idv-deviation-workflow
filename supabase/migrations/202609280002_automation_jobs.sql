@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 009: automation job queue, schedules and worker heartbeats
+-- Migration 202609280002: automation job queue, schedules and worker heartbeats
 -- =============================================================================
 
 create table if not exists public.automation_schedules (
@@ -97,11 +97,10 @@ drop policy if exists automation_jobs_select on public.automation_jobs;
 create policy automation_jobs_select on public.automation_jobs
   for select to authenticated using (true);
 
--- is_privileged_user() = operator, underwriter or admin
+-- Job inserts are server-only: /api/jobs uses the service-role client after its
+-- own role check, so there is no authenticated insert policy. Drop it if it
+-- exists from an earlier run of this migration.
 drop policy if exists automation_jobs_insert on public.automation_jobs;
-create policy automation_jobs_insert on public.automation_jobs
-  for insert to authenticated
-  with check (public.is_privileged_user() and requested_by = auth.uid() and status = 'queued');
 
 drop policy if exists automation_jobs_cancel on public.automation_jobs;
 create policy automation_jobs_cancel on public.automation_jobs

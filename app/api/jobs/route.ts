@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAction } from "@/lib/api-auth";
 import { parseJobRequest } from "@/lib/jobs";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getWorkerStatus } from "@/lib/worker-status";
 
 export async function POST(request: Request) {
@@ -29,7 +30,13 @@ export async function POST(request: Request) {
     completion_mode: "in_app",
     ...(req.type === "evaluate" ? ("all_received" in req ? { all_received: true } : { case_ids: req.case_ids }) : {}),
   };
-  const { data, error } = await supabase
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return NextResponse.json({ error: "Automation is not configured" }, { status: 500 });
+  }
+  const { data, error } = await admin
     .from("automation_jobs")
     .insert({ type: req.type, params, requested_by: user.id })
     .select("id")
