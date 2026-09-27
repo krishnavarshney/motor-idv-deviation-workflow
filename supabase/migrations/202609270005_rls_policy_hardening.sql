@@ -1,0 +1,18 @@
+create or replace function public.set_updated_at() returns trigger language plpgsql as $$begin new.updated_at=now(); return new; end;$$;
+drop trigger if exists profiles_updated_at on public.profiles; create trigger profiles_updated_at before update on public.profiles for each row execute function public.set_updated_at();
+drop trigger if exists referral_cases_updated_at on public.referral_cases; create trigger referral_cases_updated_at before update on public.referral_cases for each row execute function public.set_updated_at();
+drop trigger if exists vehicle_resolutions_updated_at on public.vehicle_resolutions; create trigger vehicle_resolutions_updated_at before update on public.vehicle_resolutions for each row execute function public.set_updated_at();
+drop trigger if exists idv_checks_updated_at on public.idv_checks; create trigger idv_checks_updated_at before update on public.idv_checks for each row execute function public.set_updated_at();
+drop trigger if exists manual_reviews_updated_at on public.manual_reviews; create trigger manual_reviews_updated_at before update on public.manual_reviews for each row execute function public.set_updated_at();
+drop trigger if exists config_settings_updated_at on public.config_settings; create trigger config_settings_updated_at before update on public.config_settings for each row execute function public.set_updated_at();
+drop policy if exists idv_select on public.idv_checks; drop policy if exists idv_write on public.idv_checks;
+create policy idv_select on public.idv_checks for select to authenticated using(true);
+create policy idv_insert on public.idv_checks for insert to authenticated with check(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')));
+create policy idv_update on public.idv_checks for update to authenticated using(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin'))) with check(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')));
+drop policy if exists vehicle_select on public.vehicle_resolutions; drop policy if exists vehicle_write on public.vehicle_resolutions;
+create policy vehicle_select on public.vehicle_resolutions for select to authenticated using(true);
+create policy vehicle_insert on public.vehicle_resolutions for insert to authenticated with check(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')));
+create policy vehicle_update on public.vehicle_resolutions for update to authenticated using(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin'))) with check(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')));
+drop policy if exists referrals_write on public.referral_cases;
+create policy referrals_insert on public.referral_cases for insert to authenticated with check(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')));
+create policy referrals_update on public.referral_cases for update to authenticated using(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin'))) with check(exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in('operator','underwriter','admin')));
