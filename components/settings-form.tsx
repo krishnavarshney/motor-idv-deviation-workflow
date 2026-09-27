@@ -34,7 +34,7 @@ export function SettingsForm({ initial }: { initial: Record<string, number> }) {
     setResult(r.ok ? "success" : "error");
     setTimeout(() => setResult("idle"), 1600);
     if (!r.ok) return notify.error("Unable to save configuration", { description: d.error });
-    notify.success("Configuration saved", { description: "Change recorded in the audit trail.", href: "/settings" });
+    notify.success("Configuration saved", { description: "Change recorded in the audit trail.", href: "/admin/rules" });
     router.refresh();
   }
 

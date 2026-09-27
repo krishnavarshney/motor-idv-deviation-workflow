@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search } from "lucide-react";
+import { CloudDownload, Search } from "lucide-react";
+import { notify } from "@/lib/notify";
 import {
   Command,
   CommandDialog,
@@ -15,9 +16,10 @@ import {
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
-import { NAV } from "@/components/nav";
+import { visibleNav } from "@/components/nav";
+import { can, type Role } from "@/lib/authz";
 
-export function CommandMenu() {
+export function CommandMenu({ role }: { role: Role | null }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -37,6 +39,15 @@ export function CommandMenu() {
     setOpen(false);
     setQuery("");
     router.push(href);
+  };
+
+  const fetchNow = async () => {
+    setOpen(false);
+    const r = await fetch("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "fetch" }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) notify.success("Fetch from CoreHub queued");
+    else notify.error(d.error || "Unable to queue fetch");
+    router.refresh();
   };
 
   return (
@@ -63,7 +74,15 @@ export function CommandMenu() {
                 </CommandItem>
               </CommandGroup>
             )}
-            {NAV.map((group, i) => (
+            {can(role, "run_jobs") && (
+              <CommandGroup heading="Actions">
+                <CommandItem value="fetch now corehub" onSelect={fetchNow}>
+                  <CloudDownload />
+                  Fetch from CoreHub now
+                </CommandItem>
+              </CommandGroup>
+            )}
+            {visibleNav(role).map((group, i) => (
               <div key={group.label}>
                 {(i > 0 || query.trim()) && <CommandSeparator />}
                 <CommandGroup heading={group.label}>

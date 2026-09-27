@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { calculateSimulatedObvSpectrum } from "@/lib/idv-simulator-engine";
 import { lookupObvHttp } from "@/src/worker/obv-lookup";
+import { requireAction } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -10,6 +11,9 @@ export const maxDuration = 60;
  * `{type:"result",success,idv,conditions,sourceUrl,reasonCode,latencyMs}` or `{type:"error",error,reasonCode,latencyMs}`.
  */
 export async function POST(request: Request) {
+  const auth = await requireAction("test_lookup");
+  if (!auth.ok) return auth.response;
+
   const started = Date.now();
   const body = await request.json().catch(() => ({}));
   const { make, model, variant, year, kmsDriven } = body;

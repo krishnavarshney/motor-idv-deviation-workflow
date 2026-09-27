@@ -1,5 +1,5 @@
 import { ShieldCheck, Sparkles } from "lucide-react";
-import { createClient } from "@/lib/supabase/server";
+import { requirePageAction } from "@/lib/api-auth";
 import { loadDecisionConfig } from "@/src/server/idv-config";
 import { SimulateClient } from "@/components/simulate-client";
 import { PageHeader } from "@/components/console";
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 export const metadata = { title: "Simulator" };
 
 export default async function SimulatePage() {
-  const supabase = await createClient();
+  const { supabase } = await requirePageAction("test_lookup");
   const [decisionConfig, { data: recentCases }] = await Promise.all([
     loadDecisionConfig(supabase),
     supabase

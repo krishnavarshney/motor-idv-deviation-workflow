@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { ChevronRight, ClipboardCheck, UserCheck } from "lucide-react";
+import { requirePageAction } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,8 @@ import { loadDecisionConfig } from "@/src/server/idv-config";
 
 export const metadata = { title: "Manual review" };
 
-export default function Reviews() {
+export default async function Reviews() {
+  await requirePageAction("review");
   return (
     <SectionProgress total={1}>
       <PageHeader

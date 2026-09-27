@@ -76,7 +76,7 @@ export interface WorkerConfig {
   dryRun: boolean;
   headless: boolean;
   pollLabel: string;
-  triggerSource: "manual" | "cron" | "github_actions";
+  triggerSource: "manual" | "cron" | "github_actions" | "schedule" | "ui";
 
   // Session persistence — reuse CoreHub login across runs
   sessionStoragePath: string;
