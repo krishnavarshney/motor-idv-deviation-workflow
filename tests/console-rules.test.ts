@@ -3,6 +3,7 @@ import { can } from "../lib/authz";
 import { activeHref, visibleNav } from "../components/nav";
 import { MAX_CASES_PER_JOB, parseJobRequest } from "../lib/jobs";
 import { isWorkerOnline } from "../lib/worker-status";
+import { startOfDayIst } from "../lib/format";
 
 function main() {
   // Role matrix (spec section 3)
@@ -47,6 +48,10 @@ function main() {
   assert.equal(activeHref("/automation/schedules"), "/automation/schedules");
   assert.equal(activeHref("/automation/jobs/123"), "/automation");
   assert.equal(activeHref("/"), "/");
+
+  // Midnight IST as a UTC instant
+  assert.equal(startOfDayIst(new Date("2026-09-27T20:00:00Z")).toISOString(), "2026-09-27T18:30:00.000Z"); // 01:30 IST on the 28th
+  assert.equal(startOfDayIst(new Date("2026-09-27T12:00:00Z")).toISOString(), "2026-09-26T18:30:00.000Z"); // 17:30 IST on the 27th
 
   console.log("console rules tests passed");
 }
