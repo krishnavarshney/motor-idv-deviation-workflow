@@ -10,30 +10,33 @@ The system is deliberately human-in-the-loop for the final underwriting action. 
 
 ## Architecture
 
-- Next.js 16 App Router: operations console and authenticated UI.
-- Supabase Auth/PostgreSQL: system of record, roles, RLS, audit events and workflow state.
-- Playwright sandbox worker: scheduled browser automation for CoreHub and OrangeBookValue.
-- Pure TypeScript decision engine: deterministic IDV comparison and fail-safe reason codes.
-- Manual review queue: final underwriter action and notes.
-- GitHub Actions: CI and controlled worker execution.
-- Vercel: intended hosting for the web/control plane; the browser worker is kept separate from the web runtime.
+- Next.js 16 App Router: operations console, authenticated UI, and review workflows.
+- Supabase Auth/PostgreSQL: durable system of record, RBAC roles, Row-Level Security (RLS), audit events, and workflow state.
+- Playwright sandbox worker (`src/worker/`): scheduled browser automation for CoreHub and OrangeBookValue (OBV). Supports launching via Google Chrome (`channel: "chrome"`) with fallback to bundled Playwright Chromium, plus session state persistence (`.session/`) to reuse authenticated CoreHub logins.
+- Multi-tier OBV Valuation & Condition Spectrum: extracts baseline IDV as well as complete vehicle condition tiers (Fair, Good, Very Good, Excellent).
+- Pure TypeScript decision engine: deterministic IDV comparison, condition-band auto-approval (`WITHIN_CONDITION_BAND`), and fail-safe reason codes.
+- Condition Spectrum UI: interactive visual breakdown of valuation ranges on case and review detail pages.
+- Manual review queue: underwriter decisioning, SLA tracking, and audit annotations.
+- GitHub Actions: CI testing, type validation, and scheduled automation execution.
+- Vercel: hosting for the Next.js control plane; the browser worker runs separately in an isolated execution sandbox.
 
 ## End-to-end workflow
 
-1. A scheduler starts an isolated worker run at a configured frequency.
-2. The worker launches a clean Chromium context.
-3. It signs into CoreHub using runtime-only credentials.
-4. It opens the Referral tab and discovers referral rows.
-5. A stable CoreHub case identifier is used for idempotency.
-6. New cases are copied into Supabase with source metadata.
-7. The worker opens the referral and extracts registration, make, model, variant, fuel, CC and requested IDV.
-8. It opens OrangeBookValue in a separate browser page/context and performs the normal website lookup.
-9. The displayed valuation and source URL are recorded as evidence metadata.
-10. The shared decision engine compares requested IDV with the observed valuation and checks vehicle confidence/provider state.
-11. Cases that meet the configured rules are marked as automation recommendation for an underwriter.
-12. Cases with ambiguity, lookup failure, timeout, provider/site changes or rule failure go to manual review.
-13. Every scan, lookup, decision and exception creates an audit event.
-14. The browser context is closed at the end of the run.
+1. A scheduler or operator triggers an isolated worker run (`npm run worker`, `worker:live`, or `worker:visible`).
+2. The worker launches a browser context (prefers system Chrome, falls back to Chromium) with reusable session storage if available.
+3. It signs into CoreHub (or reuses stored session) using runtime credentials.
+4. It navigates to the Referral tab and discovers active referral rows.
+5. A stable CoreHub case identifier is used for idempotency (`idempotency_key = corehub:<externalCaseId>`).
+6. New cases are copied into Supabase `referral_cases` with source metadata.
+7. The worker extracts registration, make, model, variant, fuel, CC and requested IDV.
+8. It opens OrangeBookValue and executes the valuation flow for the vehicle specification.
+9. OBV valuations are extracted across all available condition bands (Fair, Good, Very Good, Excellent), along with result page URL and evidence screenshots.
+10. The deterministic decision engine evaluates requested IDV against reference values:
+    - **Exact/Tolerance Match**: Auto-approved if within absolute (INR 5,000) or percentage (2%) tolerance.
+    - **Condition Band Match**: If outside base tolerance but within validated condition tiers (Very Good, Good, Excellent), the case qualifies for condition band auto-approval (`WITHIN_CONDITION_BAND`).
+    - **Exception / Deviation**: Ambiguity, low vehicle match confidence, timeouts, or out-of-band deviations route to `manual_review`.
+11. Every check, comparison, decision, and error is appended to `audit_events`.
+12. The browser context is cleanly finalized and closed at the end of the run.
 
 ## Safety model
 
@@ -75,9 +78,28 @@ Runtime secrets/configuration include:
 - SUPABASE_URL
 - SUPABASE_SERVICE_ROLE_KEY
 - AUTOMATION_DRY_RUN=true|false (default true)
-- PLAYWRIGHT_HEADLESS=true
+- PLAYWRIGHT_HEADLESS=true|false (default true)
 - AUTOMATION_POLL_LABEL
 - IDV decision configuration variables
+
+### Worker CLI commands
+
+```bash
+# Run worker in default dry-run mode (headless)
+npm run worker
+
+# Run worker in live mode (persists decisions and actions to Supabase)
+npm run worker:live
+
+# Run worker with a visible browser window (headed Chromium/Chrome)
+npm run worker:visible
+
+# Interactively log into CoreHub to save/refresh session cookies
+npm run worker:login
+
+# Test standalone OBV lookup using referral data
+npm run test:obv
+```
 
 Selectors are intentionally environment-specific. The repository does not assume undocumented DOM selectors for CoreHub or OrangeBookValue.
 
@@ -93,32 +115,27 @@ A referral is considered new when its stable external case identifier has not al
 
 ## Evidence
 
-Each automated run should retain:
+Each automated run retains:
 
-- run identifier
-- timestamps
-- CoreHub case identifier
-- extracted referral fields
-- requested IDV
-- OrangeBookValue source URL
-- observed valuation
-- lookup status/reason code
-- decision-engine result
-- recommendation reason
-- failure details where applicable
-
-Screenshots should be treated as controlled evidence artifacts and stored outside the Git repository.
+- Run record in `automation_runs` (label, status, counts, duration, error summaries)
+- Timestamps and correlation IDs
+- CoreHub external case identifier
+- Extracted referral specifications (make, model, variant, fuel, CC, requested IDV)
+- OrangeBookValue source URL and evaluated condition tiers
+- Full raw request and response payloads stored in `idv_checks`
+- Structured audit events in `audit_events`
+- Screenshot artifacts captured in `evidence/` (ignored by git)
 
 ## Existing application modules
 
-- Dashboard: operational counts and recent activity
-- Referrals: case search and queue
-- Reviews: manual review queue
-- Vehicles: resolution workbench
-- Audit: event history
-- Health: database/workflow/provider health
-- Settings: decision configuration
-- Simulator: controlled rule-engine testing
+- Dashboard (`/`): operational counts, workflow pipeline metrics, and recent activity
+- Referrals (`/referrals`, `/referrals/[id]`): case search, filterable queue, and case detail with Condition Spectrum breakdown
+- Reviews (`/reviews`, `/reviews/[id]`): underwriter manual-review queue, SLA tracking, and one-click decision actions
+- Vehicles (`/vehicles`): resolution workbench and normalization confidence inspection
+- Audit (`/audit`): immutable audit timeline and actor event log
+- Health (`/health`): database, provider, and workflow health status
+- Settings (`/settings`): runtime decision tolerance configuration
+- Simulator (`/simulate`): interactive rule-engine testing with instant feedback
 
 ## Supabase
 
@@ -134,9 +151,9 @@ Default branch: main
 
 CI performs:
 
-- TypeScript validation
-- unit tests
-- Next.js production build
+- TypeScript validation (`tsc --noEmit`)
+- Unit and simulator test suites (`npm test`)
+- Next.js production build (`npm run build`)
 
 ## Deployment model
 
@@ -146,25 +163,23 @@ The web application can be deployed to Vercel. The Playwright worker should rema
 
 Completed:
 
-- authenticated Next.js operations console
-- Supabase database/auth/RLS foundation
-- deterministic IDV decision engine
-- vehicle-resolution foundation
-- manual-review workflow
-- audit trail
-- health and configuration pages
-- controlled simulator
-- previous webhook/API adapters retained only as legacy/transition code
+- Authenticated Next.js 16 operations console with modern design system and operations shell
+- Supabase PostgreSQL database, Auth, RLS policies, and migrations
+- Deterministic IDV decision engine with absolute, percentage, and condition-band tolerance logic
+- CoreHub browser discovery and extraction pipeline (`src/worker/corehub-scraper.ts`)
+- Dual-browser launch strategy: Google Chrome (`channel: "chrome"`) with Playwright Chromium fallback
+- CoreHub session state persistence (`.session/`) to bypass redundant MFA/login cycles
+- OrangeBookValue browser valuation scraper (`src/worker/obv-lookup.ts`) capturing Fair, Good, Very Good, and Excellent condition bands
+- Condition Spectrum visual component (`components/condition-spectrum.tsx`) with interactive band visualization
+- Automatic Condition Band Approval policy (`WITHIN_CONDITION_BAND`) resolving cases whose requested IDV falls inside valid valuation bands
+- Full TypeScript validation across both application and worker codebases
+- Automated test suites for decision engine, vehicle resolution, workflow, and simulator
 
-In progress / next deployment phase:
+In progress / next operational phase:
 
-- replace webhook-first intake with scheduled CoreHub browser discovery
-- replace API-first OBV integration with browser-based OBV lookup
-- add durable automation-run state
-- add worker scheduling
-- add evidence artifact handling
-- validate environment-specific selectors against the actual CoreHub and OrangeBookValue UI
-- conduct dry-run reconciliation with real referrals before enabling any production recommendation workflow
+- Validate environment-specific selectors against live production CoreHub and OrangeBookValue UI
+- Run scheduled dry-run reconciliation (`AUTOMATION_DRY_RUN=true`) with live referral batches before flipping to live mode
+- Configure production CI/CD runner secrets and scheduled cron triggers in GitHub Actions or containerized worker infrastructure
 
 ## Important operational note
 

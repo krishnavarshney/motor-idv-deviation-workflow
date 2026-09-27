@@ -1,0 +1,83 @@
+name: IDV Deviation Worker
+
+on:
+  schedule:
+    # Run every 10 minutes during business hours IST (Mon-Sat)
+    # 03:30 - 13:30 UTC = 09:00 - 19:00 IST
+    - cron: '*/10 3-13 * * 1-6'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run in dry-run mode (no recommendations written)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      headless:
+        description: 'Run browser in headless mode'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+concurrency:
+  group: idv-worker
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Run IDV worker
+        env:
+          # Supabase
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+          # CoreHub
+          COREHUB_BASE_URL: ${{ secrets.COREHUB_BASE_URL }}
+          COREHUB_REFERRAL_URL: ${{ secrets.COREHUB_REFERRAL_URL }}
+          COREHUB_USERNAME: ${{ secrets.COREHUB_USERNAME }}
+          COREHUB_PASSWORD: ${{ secrets.COREHUB_PASSWORD }}
+          COREHUB_SELECTORS_JSON: ${{ secrets.COREHUB_SELECTORS_JSON }}
+
+          # OBV
+          OBV_SEARCH_URL: ${{ secrets.OBV_SEARCH_URL }}
+          OBV_SELECTORS_JSON: ${{ secrets.OBV_SELECTORS_JSON }}
+
+          # Worker config
+          AUTOMATION_DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+          PLAYWRIGHT_HEADLESS: ${{ github.event.inputs.headless || 'true' }}
+          AUTOMATION_TRIGGER_SOURCE: 'github_actions'
+          AUTOMATION_POLL_LABEL: 'idv-deviation-check'
+        run: npm run worker
+
+      - name: Upload evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-evidence-${{ github.run_id }}
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: ignore

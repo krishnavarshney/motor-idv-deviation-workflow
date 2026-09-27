@@ -1,3 +1,62 @@
-"use client";import {FormEvent,useState} from "react";import {useRouter} from "next/navigation";
-export default function Simulate(){const router=useRouter();const[requested,setRequested]=useState("500000");const[obv,setObv]=useState("496000");const[confidence,setConfidence]=useState("0.96");const[busy,setBusy]=useState(false);const[result,setResult]=useState<any>(null);const[error,setError]=useState("");async function submit(e:FormEvent){e.preventDefault();setBusy(true);setError("");setResult(null);const r=await fetch("/api/simulate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({requestedIdv:Number(requested),obvIdv:Number(obv),confidence:Number(confidence)})});const data=await r.json();if(!r.ok)setError(data.error||"Simulation failed");else{setResult(data);router.refresh()}setBusy(false)}return <main className="content"><div className="page-head"><div><div className="eyebrow">Engineering / Controlled Test</div><h1 className="page-title">Decision simulator</h1><div className="subtext">Run a real database-backed decision through the same engine used by the workflow.</div></div></div><section className="panel" style={{maxWidth:760}}><div className="panel-head"><div className="panel-title">IDV scenario</div><span className="badge badge-info">Safe test mode</span></div><form onSubmit={submit} style={{padding:20,display:"grid",gap:14}}><Field label="Requested IDV" value={requested} set={setRequested}/><Field label="OBV IDV" value={obv} set={setObv}/><Field label="Vehicle confidence (0-1)" value={confidence} set={setConfidence}/><button disabled={busy} className="btn btn-primary" style={{width:"fit-content"}}>{busy?"Running engine…":"Run decision"}</button>{error&&<div className="badge badge-danger">{error}</div>}</form></section>{result&&<section className="panel" style={{maxWidth:760,marginTop:16}}><div className="panel-head"><div className="panel-title">Engine result</div><span className={"badge "+(result.result.decision==="auto_approved"?"badge-success":"badge-warning")}>{result.result.decision.replaceAll("_"," ")}</span></div><div style={{padding:20}}><div style={{fontSize:22,fontWeight:700}}>{result.result.reasonCode}</div><p className="subtext">{result.result.explanation}</p><div className="idv-grid"><div><div className="subtext">Absolute delta</div><strong>₹{Number(result.result.absoluteDelta??0).toLocaleString("en-IN")}</strong></div><div><div className="subtext">Percentage delta</div><strong>{result.result.percentageDelta==null?"—":Number(result.result.percentageDelta).toFixed(2)+"%"}</strong></div></div><a className="btn" style={{marginTop:16}} href={"/referrals/"+result.case.id}>Open persisted case</a></div></section>}</main>}
-function Field({label,value,set}:{label:string;value:string;set:(v:string)=>void}){return <label style={{display:"grid",gap:6,fontSize:12,fontWeight:600}}>{label}<input value={value} onChange={e=>set(e.target.value)} inputMode="decimal" style={{height:38,border:"1px solid var(--border)",borderRadius:8,padding:"0 10px"}}/></label>}
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import { OperationsShell } from "@/components/operations-shell";
+import { loadDecisionConfig } from "@/src/server/idv-config";
+import { SimulateClient } from "@/components/simulate-client";
+import { FlaskConical, ShieldCheck, Sparkles } from "lucide-react";
+
+export default async function SimulatePage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  // Load live decision configuration
+  const decisionConfig = await loadDecisionConfig(supabase);
+
+  // Load recent real referral cases for quick testing
+  const { data: recentCases } = await supabase
+    .from("referral_cases")
+    .select(
+      "id, external_case_id, make_raw, model_raw, variant_raw, requested_idv, referral_status, metadata"
+    )
+    .order("created_at", { ascending: false })
+    .limit(8);
+
+  return (
+    <OperationsShell userEmail={user.email ?? ""}>
+      <main className="content">
+        <div className="page-head">
+          <div>
+            <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <FlaskConical size={14} /> Underwriting Intelligence / Simulator
+            </div>
+            <h1 className="page-title">IDV Deviation & Allowance Simulator</h1>
+            <div className="subtext">
+              Simulate CoreHub referral inputs (Make, Model, Variant, YOM, Requested IDV), extract OBV condition spectrum ranges, and compute permissible auto-approval corridors.
+            </div>
+          </div>
+
+          <div className="top-actions">
+            <span className="badge badge-success">
+              <ShieldCheck size={12} /> Live Policy Config Active
+            </span>
+            <span className="badge badge-info">
+              <Sparkles size={12} /> 3-Tier Valuation Enabled
+            </span>
+          </div>
+        </div>
+
+        <SimulateClient
+          decisionConfig={decisionConfig}
+          recentCases={recentCases ?? []}
+          userEmail={user.email ?? ""}
+        />
+      </main>
+    </OperationsShell>
+  );
+}

@@ -45,20 +45,21 @@ Scheduler -> Sandboxed Playwright Worker
 
 ## End-to-end workflow
 
-1. A scheduler starts an isolated worker run.
-2. The worker launches a clean Chromium context.
-3. It authenticates to CoreHub using runtime-only credentials.
-4. It opens the Referral tab and discovers new cases.
-5. A stable CoreHub case identifier provides idempotency.
-6. Referral information is persisted to Supabase.
-7. The worker extracts registration, make, model, variant, fuel, CC and requested IDV.
-8. OrangeBookValue is opened through its normal website flow.
-9. The displayed valuation and result metadata are captured.
-10. The deterministic decision engine compares requested and observed IDV.
-11. Cases satisfying the configured rules become automation recommendations for an underwriter.
-12. Ambiguous or failed cases go to manual review.
-13. Significant events are written to the audit trail.
-14. The browser context is closed when the run finishes.
+1. A scheduler or operator triggers an isolated worker run (`npm run worker`, `worker:live`, or `worker:visible`).
+2. The worker launches a browser context (prefers Google Chrome via `channel: "chrome"`, falls back to Playwright Chromium) and loads persisted CoreHub session state if present.
+3. It signs into CoreHub using runtime credentials (or reuses active session cookies from `.session/`).
+4. It navigates to the Referral tab and discovers active referral rows.
+5. A stable CoreHub case identifier provides idempotency (`idempotency_key = corehub:<externalCaseId>`).
+6. Case metadata is persisted to Supabase `referral_cases`.
+7. The worker extracts registration, make, model, variant, fuel, CC, and requested IDV.
+8. OrangeBookValue is opened and queried for the vehicle specification.
+9. Full valuation condition tiers (Fair, Good, Very Good, Excellent) and source URLs are captured.
+10. The deterministic decision engine evaluates requested IDV:
+    - **Tolerance Match**: Auto-approved if within absolute (INR 5,000) or percentage (2%) tolerance.
+    - **Condition Spectrum Match**: If outside standard deviation tolerance but within validated condition tiers (Very Good, Good, Excellent), the case qualifies for condition band auto-approval (`WITHIN_CONDITION_BAND`).
+    - **Deviation / Anomaly**: Cases with ambiguity, low vehicle match confidence, timeout, or out-of-band delta route to `manual_review`.
+11. Every check, comparison, decision, and error is appended to `audit_events`.
+12. The browser context is cleanly closed and execution summary recorded in `automation_runs`.
 
 ## Decision rules
 
@@ -90,15 +91,14 @@ This workflow supports insurance underwriting and is intentionally human-in-the-
 
 The Next.js application provides:
 
-- Dashboard
-- Referral queue
-- Global case search
-- Manual-review queue
-- Vehicle-resolution workbench
-- Audit trail
-- System health
-- Decision configuration
-- Controlled decision simulator
+- **Dashboard** (`/`): Real-time metrics, referral pipeline health, and recent deviation decisions.
+- **Referrals** (`/referrals`, `/referrals/[id]`): Filterable referral queue and deep case view with the interactive **Condition Spectrum** valuation bar.
+- **Manual Review** (`/reviews`, `/reviews/[id]`): Underwriter workbench with priority queuing, condition band auto-approvals, and action modals.
+- **Vehicles** (`/vehicles`): Normalization workbench, identity matching, and confidence inspection.
+- **Audit Trail** (`/audit`): Immutable chronological log of automation and user actions.
+- **Health** (`/health`): Connection health for Supabase, database tables, and workflow states.
+- **Settings** (`/settings`): Decision tolerance thresholds (absolute tolerance, percentage tolerance, SLA hours).
+- **Simulator** (`/simulate`): Full rule-engine simulation sandbox for test cases without web scraping.
 
 Supabase Auth and role-aware access controls protect the console.
 
@@ -119,11 +119,16 @@ automation_evidence
 profiles
 ```
 
-The database uses Row Level Security, role-aware access, audit records, foreign keys, indexes and idempotency keys.
+The database uses Row Level Security (RLS), role-aware access, audit records, foreign keys, indexes and idempotency keys.
 
 ## Browser worker
 
-The Playwright worker is intentionally environment-specific. Runtime configuration includes:
+The Playwright worker runs in an isolated runtime environment (`src/worker/`). It features:
+- **Dual browser engine launch**: Prefers local Google Chrome (`channel: "chrome"`) to minimize bot detection, falling back to Playwright Chromium.
+- **Session state caching**: Saves authenticated CoreHub cookies in `.session/` to avoid repeated 2FA/login challenges.
+- **Condition Spectrum extraction**: Extracts Fair, Good, Very Good, and Excellent valuation tiers from OrangeBookValue.
+
+### Runtime configuration
 
 ```text
 COREHUB_BASE_URL
@@ -135,8 +140,8 @@ OBV_SEARCH_URL
 OBV_SELECTORS_JSON
 SUPABASE_URL
 SUPABASE_SERVICE_ROLE_KEY
-AUTOMATION_DRY_RUN
-PLAYWRIGHT_HEADLESS
+AUTOMATION_DRY_RUN=true|false (default: true)
+PLAYWRIGHT_HEADLESS=true|false (default: true)
 ```
 
 Never commit passwords, service-role keys, session cookies, browser state, customer PII or production screenshots.
@@ -166,6 +171,25 @@ npm install
 npm run dev
 ```
 
+### Worker execution commands
+
+```bash
+# Run worker in default dry-run mode (headless)
+npm run worker
+
+# Run worker in live mode (commits decisions & actions to Supabase)
+npm run worker:live
+
+# Run worker with a visible browser window (headed mode for debugging)
+npm run worker:visible
+
+# Interactively log into CoreHub to initialize or refresh session cookies
+npm run worker:login
+
+# Standalone OBV test lookup using vehicle details
+npm run test:obv
+```
+
 ### Validate TypeScript
 
 ```bash
@@ -188,15 +212,15 @@ npm run build
 
 ### Unit tests
 
-Validate IDV tolerance rules, vehicle-resolution logic and provider failure/retry behaviour.
+Validate IDV tolerance rules, vehicle-resolution logic, simulator engines, and provider failure/retry behaviour (`npm test`).
 
 ### Controlled simulation
 
-`/simulate` executes the real decision engine against controlled values without touching production websites.
+`/simulate` executes the real decision engine against controlled values without touching external websites.
 
 ### Browser dry run
 
-The worker should first run against an authorised test environment in read-only/dry-run mode.
+The worker should first run against an authorised test environment in read-only/dry-run mode (`npm run worker`).
 
 ### Reconciliation
 
@@ -210,29 +234,45 @@ The Next.js control plane is suitable for Vercel deployment.
 
 ### Browser worker
 
-The Playwright worker should run independently in an isolated scheduled environment such as an approved container or GitHub Actions runner. It must support Chromium, secure secrets, scheduling, network access to authorised sites and controlled artifact handling.
+The Playwright worker should run independently in an isolated scheduled environment such as an approved container or GitHub Actions runner. It must support Chromium/Chrome, secure secrets, scheduling, network access to authorised sites and controlled artifact handling.
 
 ## Repository structure
 
 ```text
-app/                    Next.js application routes
-components/             Operations UI
-src/domain/             Business and decision logic
-src/connectors/         External/legacy adapters
-worker/                 Sandboxed browser automation
-tests/                  Automated tests
-supabase/               Database migrations
-.github/workflows/      CI workflows
-appinfo.md              Complete application information
+app/                    Next.js App Router pages (Dashboard, Referrals, Reviews, Settings, Simulator)
+components/             UI components (ConditionSpectrum, ReviewActions, OperationsShell, Status)
+src/domain/             Pure decision engine, tolerance math, and core domain interfaces
+src/connectors/         External & fallback connectors
+src/worker/             Sandboxed browser automation:
+  ├── run.ts            Worker orchestrator (scrape -> lookup -> decision -> persist)
+  ├── corehub-scraper.ts CoreHub referral scraper with session restoration
+  ├── obv-lookup.ts     OrangeBookValue scraper with multi-tier condition spectrum
+  ├── auth-corehub.ts   CoreHub interactive session login helper
+  ├── config.ts         Environment variable parsing & selector defaults
+  ├── evidence.ts       Screenshot and diagnostic evidence artifact capture
+  └── test-referral-obv.ts Standalone OBV scraper validation tool
+tests/                  Automated test suites (decision engine, vehicle resolution, workflow, simulator)
+supabase/               Database schema, migrations, RLS policies, and triggers
+.github/workflows/      CI and worker automation workflows
+appinfo.md              Comprehensive application documentation
 ```
 
 ## Current status
 
-Implemented: Next.js operations console, Supabase Auth/PostgreSQL foundation, RLS, deterministic IDV engine, vehicle-resolution foundation, manual-review workflow, audit trail, health/configuration pages, simulator and Playwright worker foundation.
+Implemented:
+- Authenticated Next.js 16 operations console with modern design system and operations shell.
+- Supabase Auth/PostgreSQL schema, RLS policies, audit logs, and workflow tracking.
+- Deterministic IDV engine with tolerance comparisons and Condition Band auto-approvals (`WITHIN_CONDITION_BAND`).
+- Playwright-based CoreHub browser intake and referral discovery.
+- OrangeBookValue browser valuation pipeline extracting complete condition tiers.
+- Condition Spectrum visual component and band matching.
+- Google Chrome channel fallback & persistent session caching.
+- Zero TypeScript diagnostics across both application and worker codebases.
 
-Requires authorised environment validation: CoreHub login and Referral selectors, OrangeBookValue journey and result selectors, authentication/MFA/CAPTCHA behaviour, evidence storage, scheduler and production secrets.
-
-The repository intentionally does not fabricate undocumented website selectors or API contracts.
+Operational validation:
+- Validate environment selectors against live CoreHub and OBV production pages.
+- Conduct dry-run reconciliation before switching `AUTOMATION_DRY_RUN=false`.
+- Deploy scheduled cron jobs in GitHub Actions or containerized worker host.
 
 ## Documentation
 
