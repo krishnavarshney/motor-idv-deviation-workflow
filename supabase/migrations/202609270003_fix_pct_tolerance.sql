@@ -1,0 +1,1 @@
+update public.config_settings set setting_value='2'::jsonb, description='Maximum percentage IDV difference allowed for automatic approval, expressed in percentage points' where setting_key='idv_pct_tolerance';
