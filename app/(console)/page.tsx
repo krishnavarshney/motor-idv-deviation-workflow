@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowUpRight, Bot, CheckCircle2, Clock3, ShieldCheck, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionProfile } from "@/lib/api-auth";
+import { can } from "@/lib/authz";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CaseTable } from "@/components/case-table";
@@ -14,6 +16,7 @@ export const metadata = { title: "Overview" };
 
 export default async function Dashboard() {
   const supabase = await createClient();
+  const { role } = (await getSessionProfile(supabase))!;
   const since = new Date(Date.now() - 13 * 86_400_000);
   since.setHours(0, 0, 0, 0);
   const [{ count: total }, { count: approved }, { count: reviews }, { count: failed }, { data: cases }, { data: events }, { data: recent }] =
@@ -153,10 +156,17 @@ export default async function Dashboard() {
               <ul className="flex flex-col gap-3 text-sm">
                 {(slaRisk ?? []).map((r) => (
                   <li key={r.id} className="flex items-center justify-between gap-3">
-                    <Link href={`/reviews/${r.id}`} className="font-mono hover:underline">
-                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                      {(r.referral_cases as any)?.external_case_id ?? "Review"}
-                    </Link>
+                    {can(role, "review") ? (
+                      <Link href={`/reviews/${r.id}`} className="font-mono hover:underline">
+                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                        {(r.referral_cases as any)?.external_case_id ?? "Review"}
+                      </Link>
+                    ) : (
+                      <span className="font-mono">
+                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                        {(r.referral_cases as any)?.external_case_id ?? "Review"}
+                      </span>
+                    )}
                     <span className={cn("text-xs", new Date(r.sla_due_at).getTime() < Date.now() ? "text-destructive" : "text-warning")}>
                       SLA {dateTime(r.sla_due_at)}
                     </span>
@@ -180,11 +190,13 @@ export default async function Dashboard() {
           <Card>
             <CardHeader>
               <CardTitle>Recent audit activity</CardTitle>
-              <CardAction>
-                <Button variant="link" size="sm" asChild className="px-0">
-                  <Link href="/audit">View all</Link>
-                </Button>
-              </CardAction>
+              {can(role, "audit") && (
+                <CardAction>
+                  <Button variant="link" size="sm" asChild className="px-0">
+                    <Link href="/audit">View all</Link>
+                  </Button>
+                </CardAction>
+              )}
             </CardHeader>
             <CardContent>
               <ol className="relative flex flex-col gap-4 border-l pl-4">
