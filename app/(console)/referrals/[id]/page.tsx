@@ -11,6 +11,7 @@ import { EvaluateButton } from "@/components/job-buttons";
 import { LiveRefresh } from "@/components/live-refresh";
 import { getSessionProfile } from "@/lib/api-auth";
 import { can } from "@/lib/authz";
+import { getWorkerStatus } from "@/lib/worker-status";
 import { dateTime, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +34,9 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
   if (!caseRow) notFound();
 
   const profile = await getSessionProfile(supabase);
-  const canReevaluate = can(profile?.role, "run_jobs") && caseRow.referral_status !== "processing";
+  const worker = await getWorkerStatus(supabase);
+  const hasHumanDecision = decision?.decided_by != null || caseRow.referral_status === "rejected";
+  const canReevaluate = can(profile?.role, "run_jobs") && caseRow.referral_status !== "processing" && !hasHumanDecision;
 
   return (
     <>
@@ -55,7 +58,14 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
                   <Link href={"/reviews/" + review.id}>Open review</Link>
                 </Button>
               )}
-              {canReevaluate && <EvaluateButton caseIds={[caseRow.id]} label="Re-evaluate" variant="outline" />}
+              {canReevaluate && (
+                <EvaluateButton
+                  caseIds={[caseRow.id]}
+                  label="Re-evaluate"
+                  variant="outline"
+                  disabledReason={worker.online ? null : "Worker offline"}
+                />
+              )}
               <DecisionBadge status={caseRow.referral_status} className="h-7 px-3 text-sm" />
             </>
           }

@@ -11,7 +11,7 @@ import type { WorkerConfig } from "./config";
 import { scrapeCorehub } from "./corehub-scraper";
 import { lookupObvBrowser, type ObvBrowserResult } from "./obv-lookup";
 import { reconcileConditionBands } from "./reconcile";
-import { BROWSER_VEHICLE_CONFIDENCE, caseStatusesFor, decisionInputFor, newCaseRow, providerStatusFor } from "./case-mapping";
+import { BROWSER_VEHICLE_CONFIDENCE, caseStatusesFor, decisionInputFor, hasHumanDecision, newCaseRow, providerStatusFor } from "./case-mapping";
 import { evaluateIdvDecision } from "../domain/decision-engine";
 import { loadDecisionConfig } from "../server/idv-config";
 import type { DecisionConfig } from "../domain/motor-idv";
@@ -306,10 +306,29 @@ export async function evaluateCases(
   const { data: cases, error } = await s.supabase.from("referral_cases").select("*").in("id", caseIds);
   if (error) throw new Error(`Failed to load cases: ${error.message}`);
 
+  const { data: decisions, error: decisionsError } = await s.supabase
+    .from("approval_decisions")
+    .select("case_id,decided_by")
+    .in("case_id", caseIds);
+  if (decisionsError) throw new Error(`Failed to load decisions: ${decisionsError.message}`);
+  const decisionByCaseId = new Map((decisions ?? []).map((d) => [d.case_id as string, { decided_by: d.decided_by as string | null }]));
+
   const rows = cases ?? [];
   const page = await s.context.newPage();
   try {
     for (const [i, c] of rows.entries()) {
+      if (hasHumanDecision(decisionByCaseId.get(c.id) ?? null)) {
+        await s.supabase.from("audit_events").insert({
+          case_id: c.id,
+          event_type: "browser_worker_case_skipped",
+          actor_type: "automation",
+          severity: "info",
+          payload: { reason: "human_decision", runId: s.runId },
+          correlation_id: c.correlation_id,
+        });
+        await onProgress?.(i + 1, rows.length);
+        continue;
+      }
       try {
         await evaluateOne(s, page, c);
         counts.casesProcessed++;

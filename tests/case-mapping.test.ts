@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { evaluateIdvDecision } from "../src/domain/decision-engine";
-import { caseStatusesFor, decisionInputFor, newCaseRow, providerStatusFor } from "../src/worker/case-mapping";
+import { caseStatusesFor, decisionInputFor, hasHumanDecision, newCaseRow, providerStatusFor } from "../src/worker/case-mapping";
 import type { ObvBrowserResult } from "../src/worker/obv-lookup";
 
 const cfg = {
@@ -31,6 +31,10 @@ function main() {
 
   // Same request without bands → manual review.
   assert.equal(evaluateIdvDecision(decisionInputFor(540000, obv()), cfg).decision, "manual_review");
+
+  assert.equal(hasHumanDecision(null), false);
+  assert.equal(hasHumanDecision({ decided_by: null }), false);
+  assert.equal(hasHumanDecision({ decided_by: "user-1" }), true);
 
   assert.deepEqual(caseStatusesFor("auto_approved"), { referral_status: "approved", workflow_status: "auto_approved" });
   assert.deepEqual(caseStatusesFor("manual_review"), { referral_status: "manual_review", workflow_status: "queued_for_review" });

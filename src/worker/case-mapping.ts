@@ -5,6 +5,11 @@ import type { DecisionInput, DecisionType, ProviderStatus } from "../domain/moto
 /** Vehicle identity extracted from the CoreHub table rather than matched: moderate confidence. */
 export const BROWSER_VEHICLE_CONFIDENCE = 0.9;
 
+/** A human decision (approved/rejected by a person) is final: automation must never overwrite it. */
+export function hasHumanDecision(decision: { decided_by: string | null } | null): boolean {
+  return decision?.decided_by != null;
+}
+
 export function providerStatusFor(obv: Pick<ObvBrowserResult, "success" | "reasonCode">): ProviderStatus {
   if (obv.success) return "succeeded";
   if (obv.reasonCode === "TIMEOUT") return "timeout";
