@@ -1,4 +1,4 @@
-import { Activity, Archive, ClipboardCheck, FileClock, FlaskConical, LayoutDashboard, Settings, SlidersHorizontal } from "lucide-react";
+import { Activity, Archive, Bot, CalendarClock, ClipboardCheck, FileClock, FlaskConical, LayoutDashboard, Settings, SlidersHorizontal } from "lucide-react";
 
 export const NAV = [
   {
@@ -7,6 +7,13 @@ export const NAV = [
       { title: "Overview", href: "/", icon: LayoutDashboard },
       { title: "Referral queue", href: "/referrals", icon: Archive },
       { title: "Manual review", href: "/reviews", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "Automation",
+    items: [
+      { title: "Runs", href: "/automation", icon: Bot },
+      { title: "Schedules", href: "/automation/schedules", icon: CalendarClock },
     ],
   },
   {
@@ -25,3 +32,10 @@ export const NAV = [
     ],
   },
 ] as const;
+
+/** Longest nav href matching the path, so /automation/schedules doesn't also light up /automation. */
+export function activeHref(pathname: string): string | undefined {
+  return NAV.flatMap((g) => g.items.map((i) => i.href as string))
+    .filter((h) => (h === "/" ? pathname === "/" : pathname === h || pathname.startsWith(h + "/")))
+    .sort((a, b) => b.length - a.length)[0];
+}

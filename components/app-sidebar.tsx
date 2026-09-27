@@ -25,11 +25,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { NAV } from "@/components/nav";
+import { NAV, activeHref } from "@/components/nav";
 
 export function AppSidebar({ userEmail }: { userEmail: string }) {
   const pathname = usePathname();
-  const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
+  const active = activeHref(pathname);
   const initials = userEmail.slice(0, 2).toUpperCase();
 
   return (
@@ -58,7 +58,7 @@ export function AppSidebar({ userEmail }: { userEmail: string }) {
             <SidebarMenu>
               {group.items.map((item) => (
                 <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton asChild isActive={isActive(item.href)} tooltip={item.title}>
+                  <SidebarMenuButton asChild isActive={item.href === active} tooltip={item.title}>
                     <Link href={item.href}>
                       <item.icon />
                       <span>{item.title}</span>

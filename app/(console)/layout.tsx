@@ -6,6 +6,8 @@ import { Separator } from "@/components/ui/separator";
 import { AppSidebar } from "@/components/app-sidebar";
 import { CommandMenu } from "@/components/command-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { WorkerStatusPill } from "@/components/worker-status-pill";
+import { getWorkerStatus } from "@/lib/worker-status";
 
 export default async function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -14,6 +16,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
   const sidebarOpen = (await cookies()).get("sidebar_state")?.value !== "false";
+  const worker = await getWorkerStatus(supabase);
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen}>
@@ -23,7 +26,8 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
           <CommandMenu />
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex items-center gap-2">
+            <WorkerStatusPill initialLastSeen={worker.lastSeenAt} />
             <ThemeToggle />
           </div>
         </header>

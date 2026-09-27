@@ -15,6 +15,8 @@ const TONES = {
 
 function tone(status: string): keyof typeof TONES {
   const s = status.toLowerCase();
+  if (s === "succeeded" || s === "completed" || s === "dry_run_completed") return "success";
+  if (s === "running" || s === "queued") return "info";
   if (s.includes("approved")) return "success";
   if (s.includes("review") || s.includes("pending")) return "warning";
   if (s.includes("failed") || s.includes("rejected") || s === "error") return "destructive";
