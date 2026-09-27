@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft, History } from "lucide-react";
+import { ChevronLeft, ExternalLink, History } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DecisionBadge } from "@/components/status";
 import { DetailList, PageHeader } from "@/components/console";
 import { DecisionEvidence, VehicleCard } from "@/components/decision-evidence";
@@ -12,7 +14,7 @@ import { LiveRefresh } from "@/components/live-refresh";
 import { getSessionProfile } from "@/lib/api-auth";
 import { can } from "@/lib/authz";
 import { getWorkerStatus } from "@/lib/worker-status";
-import { dateTime, humanize } from "@/lib/format";
+import { dateTime, humanize, money } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Case detail" };
@@ -72,15 +74,23 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
         />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="flex min-w-0 flex-col gap-4">
+      <Tabs defaultValue="summary" className="flex flex-col gap-4">
+        <TabsList>
+          <TabsTrigger value="summary">Summary</TabsTrigger>
+          <TabsTrigger value="vehicle">Vehicle match</TabsTrigger>
+          <TabsTrigger value="obv">OBV evidence</TabsTrigger>
+          <TabsTrigger value="timeline">Timeline</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="summary">
           <DecisionEvidence decision={decision} idv={idv} requestedIdv={caseRow.requested_idv} />
+        </TabsContent>
+
+        <TabsContent value="vehicle" className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <VehicleCard resolution={resolution} fallback={caseRow} />
-        </div>
-        <div className="flex flex-col gap-4">
-          <Card>
+          <Card className="self-start">
             <CardHeader>
-              <CardTitle>Case details</CardTitle>
+              <CardTitle>From CoreHub</CardTitle>
             </CardHeader>
             <CardContent>
               <DetailList
@@ -90,11 +100,72 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
                   ["Model", caseRow.model_raw || "—"],
                   ["Variant", caseRow.variant_raw || "—"],
                   ["Fuel", caseRow.fuel_type_raw || "—"],
+                  ["CC", caseRow.cc_raw || "—"],
                   ["Workflow", humanize(caseRow.workflow_status)],
                 ]}
               />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="obv" className="grid gap-4 xl:grid-cols-2">
+          <Card className="self-start">
+            <CardHeader>
+              <CardTitle>Lookup</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <DetailList
+                items={[
+                  ["Provider", idv?.provider ?? "—"],
+                  ["Status", humanize(idv?.provider_status)],
+                  ["Base valuation", money(idv?.fetched_idv)],
+                  ["Latency", idv?.lookup_latency_ms == null ? "—" : `${idv.lookup_latency_ms} ms`],
+                  ["Fetched", dateTime(idv?.fetched_at)],
+                  ["Reason", idv?.raw_response?.reasonCode ?? "—"],
+                ]}
+              />
+              {idv?.raw_response?.sourceUrl && (
+                <Button variant="outline" size="sm" asChild className="w-fit">
+                  <a href={idv.raw_response.sourceUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink data-icon="inline-start" />
+                    Open OBV result page
+                  </a>
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+          <Card className="self-start pb-0">
+            <CardHeader>
+              <CardTitle>Condition tiers</CardTitle>
+            </CardHeader>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">Tier</TableHead>
+                  <TableHead className="text-right">Min</TableHead>
+                  <TableHead className="pr-4 text-right">Max</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(
+                  [
+                    ["Good", idv?.raw_response?.conditions?.good],
+                    ["Very good", idv?.raw_response?.conditions?.veryGood],
+                    ["Excellent", idv?.raw_response?.conditions?.excellent],
+                  ] as const
+                ).map(([label, tier]) => (
+                  <TableRow key={label}>
+                    <TableCell className="pl-4">{label}</TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">{money(tier?.min)}</TableCell>
+                    <TableCell className="pr-4 text-right font-mono tabular-nums">{money(tier?.max)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="timeline">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -122,8 +193,8 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
               </ol>
             </CardContent>
           </Card>
-        </div>
-      </div>
+        </TabsContent>
+      </Tabs>
     </>
   );
 }
