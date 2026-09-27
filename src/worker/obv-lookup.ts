@@ -1,19 +1,13 @@
 /**
- * OrangeBookValue Browser Lookup — Playwright automation for OBV website.
+ * OrangeBookValue lookup over plain HTTP — the same endpoints OBV's own search form calls.
  *
- * Workflow:
- * 1. Open OrangeBookValue.com
- * 2. Fill in make / model / variant
- * 3. Submit search
- * 4. Extract the displayed IDV valuation
- * 5. Return structured result with evidence
+ * 1. Resolve free-text make / model / year / variant to OBV's exact catalog names (`/mmyt`)
+ * 2. POST the valuation form (`/result`) and read every condition band from the page
  *
- * Handles: no results, ambiguous results, timeouts, CAPTCHA detection.
+ * ~1-2s per vehicle, no browser.
  */
 
-import type { Page } from "playwright";
-import type { ObvSelectors, WorkerConfig } from "./config";
-import { captureEvidence, type EvidenceArtifact } from "./evidence";
+import type { EvidenceArtifact } from "./evidence";
 
 export interface ConditionRange {
   min: number;
@@ -48,60 +42,6 @@ export interface ObvBrowserResult {
   latencyMs: number;
   evidence: EvidenceArtifact[];
   raw?: unknown;
-}
-
-export interface ObvStep {
-  key: string;
-  label: string;
-  status: "running" | "done" | "failed";
-  detail?: string;
-}
-
-/**
- * Detect if the page is showing a CAPTCHA or bot-detection challenge.
- */
-async function detectCaptcha(page: Page): Promise<boolean> {
-  try {
-    const bodyText = await page.locator("body").innerText({ timeout: 2000 });
-    const lower = bodyText.toLowerCase();
-    return (
-      lower.includes("captcha") ||
-      lower.includes("verify you are human") ||
-      lower.includes("robot") ||
-      lower.includes("challenge")
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Parse IDV from a displayed text string.
- * Handles formats like:
- *   "₹5,96,007 - ₹6,32,873 *" -> returns midpoint ₹6,14,440
- *   "₹5,52,996 *" -> returns ₹5,52,996
- *   "496000" -> returns 496000
- */
-export function parseObvIdv(raw: string | null): number | null {
-  if (!raw) return null;
-  const cleaned = raw.replace(/[₹,]/g, "");
-  const numbers = cleaned
-    .match(/\b\d{4,8}\b/g)
-    ?.map(Number)
-    .filter((n) => Number.isFinite(n) && n > 1000);
-
-  if (!numbers || numbers.length === 0) {
-    const fallbackMatch = cleaned.match(/(\d+\.?\d*)/);
-    if (!fallbackMatch) return null;
-    const num = Number(fallbackMatch[1]);
-    return Number.isFinite(num) && num > 1000 ? num : null;
-  }
-
-  if (numbers.length >= 2) {
-    // If range returned (e.g. min - max), return the midpoint
-    return Math.round((numbers[0] + numbers[1]) / 2);
-  }
-  return numbers[0];
 }
 
 const OBV_ORIGIN = "https://www.orangebookvalue.com";
@@ -139,13 +79,7 @@ export async function fetchObvOptions(q: { make?: string; model?: string; year?:
  * condition band as `all_prices["Good"]["range_from"] = "31,21,938"`. An MMV OBV doesn't know
  * redirects (302) to the home page, reported as NO_RESULTS.
  */
-export async function lookupObvHttp(vehicle: {
-  make: string;
-  model: string;
-  variant: string;
-  year?: string | number;
-  kmsDriven?: string | number;
-}): Promise<ObvBrowserResult> {
+export async function lookupObvHttp(vehicle: ObvVehicleInput): Promise<ObvBrowserResult> {
   const started = Date.now();
   const sourceUrl = `${OBV_ORIGIN}/result?car_sell_dealer`;
   const fail = (reasonCode: ObvBrowserResult["reasonCode"], raw?: unknown): ObvBrowserResult => ({
@@ -208,469 +142,78 @@ export async function lookupObvHttp(vehicle: {
   return { success: true, idv, conditions, sourceUrl, reasonCode: "SUCCESS", latencyMs: Date.now() - started, evidence: [], raw: { conditions } };
 }
 
+const FUELS = ["petrol", "diesel", "cng", "electric"];
+const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9.]+/).filter(Boolean);
+
 /**
- * Select a value in a dropdown or fill an input.
- * For <select> elements, smartly searches through option text using substring,
- * token, and fuzzy matching, then waits for dependent dropdowns to populate.
+ * Best OBV option for a free-text value. Case-insensitive exact match wins; otherwise the option
+ * sharing the most words (Jaccard >= 0.5) wins, but only if it is the single best. An option naming
+ * a different fuel is never picked. null = no confident match — callers route to manual review.
  */
-async function fillField(
-  page: Page,
-  selector: string,
-  value: string
-): Promise<boolean> {
-  try {
-    const element = page.locator(selector).first();
-    await element.waitFor({ timeout: 6000 });
+export function matchObvOption(options: string[], value: string, fuel?: string | null): string | null {
+  const t = value.toLowerCase().trim();
+  if (!t) return null;
+  const exact = options.find((o) => o.toLowerCase().trim() === t);
+  if (exact) return exact;
 
-    const tagName = await element.evaluate((el) => el.tagName.toLowerCase());
-
-    if (tagName === "select") {
-      // Wait for options to be populated if needed
-      await page
-        .waitForFunction(
-          (sel) => {
-            const el = document.querySelector(sel);
-            return el && el.querySelectorAll("option").length > 1;
-          },
-          selector,
-          { timeout: 6000 }
-        )
-        .catch(() => {});
-
-      const targetValLower = value.toLowerCase().trim();
-      const optionValueToSelect = await page.evaluate(
-        ({ sel, target }) => {
-          const select = document.querySelector(sel) as HTMLSelectElement | null;
-          if (!select) return null;
-          const options = Array.from(select.options);
-          // 1. Exact text match
-          const exact = options.find(
-            (o) => o.text.trim().toLowerCase() === target
-          );
-          if (exact) return exact.value;
-          // 2. Substring match
-          const substr = options.find((o) =>
-            o.text.toLowerCase().includes(target)
-          );
-          if (substr) return substr.value;
-          // 3. Reversed substring match (target contains option text)
-          const rev = options.find(
-            (o) => o.text.trim().length > 2 && target.includes(o.text.trim().toLowerCase())
-          );
-          if (rev) return rev.value;
-          // 4. Token match (e.g. "Zeta", "Baleno", "Petrol")
-          const tokens = target.split(/\s+/).filter((t: string) => t.length > 2);
-          const tokenMatch = options.find((o) =>
-            tokens.some((tok: string) => o.text.toLowerCase().includes(tok))
-          );
-          if (tokenMatch) return tokenMatch.value;
-          // No match: fail loudly. Picking an arbitrary option valued the wrong vehicle.
-          return null;
-        },
-        { sel: selector, target: targetValLower }
-      );
-
-      if (optionValueToSelect !== null) {
-        await element.selectOption(optionValueToSelect);
-        await page.waitForTimeout(800);
-        return true;
-      }
-      return false;
-    } else {
-      await element.click();
-      await element.fill("");
-      await element.fill(value);
-      await page.waitForTimeout(600);
-      try {
-        const suggestion = page
-          .locator(".autocomplete-item, .suggestion, .dropdown-item, li[role='option']")
-          .first();
-        if (await suggestion.isVisible({ timeout: 1000 }).catch(() => false)) {
-          await suggestion.click();
-        }
-      } catch {}
-      return true;
-    }
-  } catch (err) {
-    console.warn(`⚠ Could not fill field "${selector}" with value "${value}":`, err);
-    return false;
+  const want = new Set(tokens(`${value} ${fuel ?? ""}`));
+  const wantFuel = FUELS.find((f) => want.has(f));
+  let best: string | null = null;
+  let bestScore = 0;
+  let tie = false;
+  for (const o of options) {
+    const have = new Set(tokens(o));
+    if (wantFuel && FUELS.some((f) => f !== wantFuel && have.has(f))) continue;
+    const shared = [...want].filter((w) => have.has(w)).length;
+    const score = shared / new Set([...want, ...have]).size;
+    if (score > bestScore) [best, bestScore, tie] = [o, score, false];
+    else if (score === bestScore && score > 0) tie = true;
   }
+  return bestScore >= 0.5 && !tie ? best : null;
 }
 
+type ObvVehicleInput = { make: string; model: string; variant: string; year?: string | number; kmsDriven?: string | number; fuel?: string | null };
+
 /**
- * Perform an OBV website lookup for a given vehicle.
+ * Map raw intake names (e.g. CoreHub "VOLKSWAGEN" / "TIGUAN") onto OBV's catalog, one level at a time.
+ * Returns the first field OBV has no match for instead of guessing.
  */
-export async function lookupObvBrowser(
-  page: Page,
-  vehicle: {
-    make: string;
-    model: string;
-    variant: string;
-    year?: string | number;
-    kmsDriven?: string | number;
-  },
-  config: WorkerConfig,
-  runId: string,
-  onStep?: (step: ObvStep) => void
-): Promise<ObvBrowserResult> {
-  const evidence: EvidenceArtifact[] = [];
+export async function resolveObvVehicle(
+  v: ObvVehicleInput
+): Promise<{ make: string; model: string; year: string; variant: string } | { unmatched: "make" | "model" | "year" | "variant" }> {
+  const make = matchObvOption(await fetchObvOptions({}), v.make);
+  if (!make) return { unmatched: "make" };
+  const model = matchObvOption(await fetchObvOptions({ make }), v.model);
+  if (!model) return { unmatched: "model" };
+  // No YOM = no valuation: a guessed year would value the wrong car.
+  const year = v.year ? matchObvOption(await fetchObvOptions({ make, model }), String(v.year)) : null;
+  if (!year) return { unmatched: "year" };
+  const variant = matchObvOption(await fetchObvOptions({ make, model, year }), v.variant, v.fuel);
+  if (!variant) return { unmatched: "variant" };
+  return { make, model, year, variant };
+}
+
+/** Worker entry: resolve raw MMV, then value it. `raw.resolved` records exactly what OBV valued. */
+export async function lookupObv(vehicle: ObvVehicleInput): Promise<ObvBrowserResult> {
   const started = Date.now();
-  const selectors = config.obvSelectors;
-  // Progress hook for streaming callers; a throwing listener must never break the lookup.
-  const step = (key: string, label: string, status: ObvStep["status"] = "done", detail?: string) => {
-    try {
-      onStep?.({ key, label, status, detail });
-    } catch {}
-  };
+  const fail = (reasonCode: ObvBrowserResult["reasonCode"], raw: unknown): ObvBrowserResult => ({
+    success: false,
+    idv: null,
+    sourceUrl: null,
+    reasonCode,
+    latencyMs: Date.now() - started,
+    evidence: [],
+    raw,
+  });
 
+  let resolved: Awaited<ReturnType<typeof resolveObvVehicle>>;
   try {
-    // Step 1: Navigate to OBV
-    step("navigate", "Opening OrangeBookValue", "running");
-    console.log(`🔍 OBV lookup: ${vehicle.make} ${vehicle.model} ${vehicle.variant} (${vehicle.year ?? "2022"})`);
-    await page.goto(config.obvSearchUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: config.navigationTimeoutMs,
-    });
-    evidence.push(await captureEvidence(page, "obv_home", runId));
-    step("navigate", "Opened OrangeBookValue");
-
-    // Step 2: Check for CAPTCHA
-    if (await detectCaptcha(page)) {
-      step("captcha", "Captcha detected on OrangeBookValue", "failed");
-      evidence.push(
-        await captureEvidence(page, "obv_captcha_detected", runId)
-      );
-      return {
-        success: false,
-        idv: null,
-        sourceUrl: page.url(),
-        reasonCode: "CAPTCHA_DETECTED",
-        latencyMs: Date.now() - started,
-        evidence,
-      };
-    }
-
-    // Step 3: Fill in vehicle details
-    // Optional Category selection (e.g. Car)
-    const hasCategory = await page
-      .locator("select[name='category']")
-      .isVisible({ timeout: 1500 })
-      .catch(() => false);
-    if (hasCategory) {
-      await fillField(page, "select[name='category']", "Car");
-      await page.waitForTimeout(800);
-    }
-
-    step("make", `Selecting ${vehicle.make}`, "running");
-    const makeFilled = await fillField(page, selectors.makeInput, vehicle.make);
-    if (!makeFilled) {
-      step("make", `Could not select make ${vehicle.make}`, "failed", selectors.makeInput);
-      evidence.push(
-        await captureEvidence(page, "obv_make_selector_fail", runId)
-      );
-      return {
-        success: false,
-        idv: null,
-        sourceUrl: page.url(),
-        reasonCode: "SELECTOR_MISMATCH",
-        latencyMs: Date.now() - started,
-        evidence,
-        raw: { failedField: "make", selector: selectors.makeInput },
-      };
-    }
-
-    step("make", `Selected ${vehicle.make}`);
-    // Wait for model dropdown to populate after make selection
-    await page.waitForTimeout(1000);
-
-    step("model", `Selecting ${vehicle.model}`, "running");
-
-    const modelFilled = await fillField(
-      page,
-      selectors.modelInput,
-      vehicle.model
-    );
-    if (!modelFilled) {
-      step("model", `Could not select model ${vehicle.model}`, "failed", selectors.modelInput);
-      evidence.push(
-        await captureEvidence(page, "obv_model_selector_fail", runId)
-      );
-      return {
-        success: false,
-        idv: null,
-        sourceUrl: page.url(),
-        reasonCode: "SELECTOR_MISMATCH",
-        latencyMs: Date.now() - started,
-        evidence,
-        raw: { failedField: "model", selector: selectors.modelInput },
-      };
-    }
-
-    step("model", `Selected ${vehicle.model}`);
-    await page.waitForTimeout(1000);
-
-    // Optional Year dropdown (populated dynamically on OBV)
-    const hasYear = await page
-      .locator("select[name='year']")
-      .isVisible({ timeout: 1500 })
-      .catch(() => false);
-    if (hasYear) {
-      const yearToUse = vehicle.year ? String(vehicle.year) : "2022";
-      await fillField(page, "select[name='year']", yearToUse);
-      await page.waitForTimeout(800);
-    }
-
-    step("variant", `Selecting ${vehicle.variant || "variant"}`, "running");
-    const variantFilled = await fillField(
-      page,
-      selectors.variantInput,
-      vehicle.variant
-    );
-    if (!variantFilled) {
-      step("variant", `Could not select variant ${vehicle.variant}`, "failed", selectors.variantInput);
-      evidence.push(
-        await captureEvidence(page, "obv_variant_selector_fail", runId)
-      );
-      return {
-        success: false,
-        idv: null,
-        sourceUrl: page.url(),
-        reasonCode: "SELECTOR_MISMATCH",
-        latencyMs: Date.now() - started,
-        evidence,
-        raw: { failedField: "variant", selector: selectors.variantInput },
-      };
-    }
-
-    // Optional Kms driven
-    const kmsInput = page
-      .locator("input[type='number'][name='kms_driven']")
-      .first();
-    if (await kmsInput.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await kmsInput.fill(vehicle.kmsDriven ? String(vehicle.kmsDriven) : "15000");
-    }
-
-    evidence.push(
-      await captureEvidence(page, "obv_fields_filled", runId, {
-        make: vehicle.make,
-        model: vehicle.model,
-        variant: vehicle.variant,
-      })
-    );
-
-    step("variant", `Selected ${vehicle.variant || "variant"}`);
-    step("fields", "Vehicle details entered");
-
-    // Step 4: Submit search
-    step("search", "Submitting valuation search", "running");
-    try {
-      await page.click(selectors.searchButton);
-      await page.waitForLoadState("domcontentloaded", {
-        timeout: config.obvLookupTimeoutMs,
-      });
-    } catch (err) {
-      step("search", "Valuation search timed out", "failed");
-      evidence.push(
-        await captureEvidence(page, "obv_search_timeout", runId)
-      );
-      return {
-        success: false,
-        idv: null,
-        sourceUrl: page.url(),
-        reasonCode: "TIMEOUT",
-        latencyMs: Date.now() - started,
-        evidence,
-      };
-    }
-
-    evidence.push(await captureEvidence(page, "obv_results_page", runId));
-    step("search", "Results page loaded");
-
-    // Step 5: Check for CAPTCHA on results page
-    if (await detectCaptcha(page)) {
-      step("captcha", "Captcha detected on results page", "failed");
-      evidence.push(
-        await captureEvidence(page, "obv_captcha_on_results", runId)
-      );
-      return {
-        success: false,
-        idv: null,
-        sourceUrl: page.url(),
-        reasonCode: "CAPTCHA_DETECTED",
-        latencyMs: Date.now() - started,
-        evidence,
-      };
-    }
-
-    // Step 6: Extract IDV values for Good, Very Good, and Excellent
-    const targetConditions = [
-      { key: "good" as const, label: "Good" },
-      { key: "veryGood" as const, label: "Very Good" },
-      { key: "excellent" as const, label: "Excellent" },
-    ];
-
-    const conditionValuations: Partial<
-      Record<"good" | "veryGood" | "excellent", ConditionRange>
-    > = {};
-
-    step("conditions", "Reading condition bands", "running");
-    for (const cond of targetConditions) {
-      try {
-        const clicked = await page.evaluate((targetLabel) => {
-          const tabs = Array.from(
-            document.querySelectorAll(
-              ".price-tabs a, .price-tabs li, .price-tabs button, a[data-toggle='tab'], [role='tab']"
-            )
-          );
-          const match = tabs.find(
-            (t) =>
-              (t as HTMLElement).innerText &&
-              (t as HTMLElement).innerText.trim().toLowerCase() ===
-                targetLabel.toLowerCase()
-          );
-          if (match) {
-            (match as HTMLElement).click();
-            return true;
-          }
-          return false;
-        }, cond.label);
-
-        if (clicked) {
-          await page.waitForTimeout(600);
-        }
-
-        const rawPriceText = await page.evaluate(() => {
-          const el = document.querySelector(
-            ".mainPrice, .price.price-scroll.mainPrice, .price.price-scroll"
-          ) as HTMLElement | null;
-          return el ? el.innerText.trim().replace(/\s+/g, " ") : null;
-        });
-
-        if (rawPriceText) {
-          const midpoint = parseObvIdv(rawPriceText);
-          const numbers = rawPriceText
-            .replace(/[₹,]/g, "")
-            .match(/\b\d{4,9}\b/g)
-            ?.map(Number)
-            .filter((n: number) => Number.isFinite(n) && n > 1000);
-
-          if (midpoint !== null) {
-            const min =
-              numbers && numbers.length >= 2
-                ? Math.min(numbers[0], numbers[1])
-                : midpoint;
-            const max =
-              numbers && numbers.length >= 2
-                ? Math.max(numbers[0], numbers[1])
-                : midpoint;
-
-            conditionValuations[cond.key] = {
-              min,
-              max,
-              midpoint,
-              raw: rawPriceText,
-            };
-          }
-        }
-      } catch (err) {
-        console.warn(`⚠ Could not extract condition "${cond.label}":`, err);
-      }
-    }
-
-    // Benchmark IDV: prefer Very Good, then Good, then Excellent
-    const primaryIdv =
-      conditionValuations.veryGood?.midpoint ??
-      conditionValuations.good?.midpoint ??
-      conditionValuations.excellent?.midpoint ??
-      null;
-
-    if (primaryIdv !== null) {
-      step("conditions", `Read ${Object.keys(conditionValuations).length} condition bands`);
-      evidence.push(
-        await captureEvidence(page, "obv_conditions_extracted", runId, {
-          conditions: conditionValuations,
-          primaryIdv,
-        })
-      );
-
-      console.log(
-        `✅ OBV Conditions Extracted:` +
-          (conditionValuations.good ? ` Good: ${conditionValuations.good.raw} |` : "") +
-          (conditionValuations.veryGood ? ` Very Good: ${conditionValuations.veryGood.raw} |` : "") +
-          (conditionValuations.excellent ? ` Excellent: ${conditionValuations.excellent.raw}` : "")
-      );
-
-      return {
-        success: true,
-        idv: primaryIdv,
-        conditions: conditionValuations,
-        sourceUrl: page.url(),
-        reasonCode: "SUCCESS",
-        latencyMs: Date.now() - started,
-        evidence,
-        raw: { conditions: conditionValuations },
-      };
-    }
-
-    // Fallback: check if standard single IDV element is present
-    step("conditions", "No condition bands found — reading single IDV", "running");
-    try {
-      const idvElement = page.locator(selectors.idvValue).first();
-      await idvElement.waitFor({ timeout: 4000 });
-      const rawIdvText = await idvElement.innerText();
-      const idv = parseObvIdv(rawIdvText);
-
-      if (idv !== null) {
-        step("conditions", "Read single IDV value");
-        evidence.push(
-          await captureEvidence(page, "obv_idv_extracted", runId, {
-            rawText: rawIdvText,
-            parsedIdv: idv,
-          })
-        );
-        return {
-          success: true,
-          idv,
-          conditions: conditionValuations,
-          sourceUrl: page.url(),
-          reasonCode: "SUCCESS",
-          latencyMs: Date.now() - started,
-          evidence,
-          raw: { rawText: rawIdvText },
-        };
-      }
-    } catch {}
-
-    // If neither conditions nor single IDV could be extracted
-    step("conditions", "Could not find a valuation on the results page", "failed");
-    evidence.push(
-      await captureEvidence(page, "obv_idv_selector_fail", runId)
-    );
-
-    return {
-      success: false,
-      idv: null,
-      conditions: conditionValuations,
-      sourceUrl: page.url(),
-      reasonCode: "SELECTOR_MISMATCH",
-      latencyMs: Date.now() - started,
-      evidence,
-    };
+    resolved = await resolveObvVehicle(vehicle);
   } catch (err) {
-    step("error", "Lookup error", "failed", err instanceof Error ? err.message : String(err));
-    evidence.push(
-      await captureEvidence(page, "obv_unknown_error", runId, {
-        error: String(err),
-      })
-    );
-    return {
-      success: false,
-      idv: null,
-      sourceUrl: page.url(),
-      reasonCode: "UNKNOWN_ERROR",
-      latencyMs: Date.now() - started,
-      evidence,
-      raw: { error: String(err) },
-    };
+    return fail("NAVIGATION_ERROR", { error: String(err), input: vehicle });
   }
+  if ("unmatched" in resolved) return fail("NO_RESULTS", { unmatched: resolved.unmatched, input: vehicle });
+
+  const result = await lookupObvHttp({ ...resolved, kmsDriven: vehicle.kmsDriven });
+  return { ...result, latencyMs: Date.now() - started, raw: { ...(result.raw as object | undefined), resolved, input: vehicle } };
 }

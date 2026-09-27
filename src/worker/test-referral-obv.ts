@@ -16,8 +16,8 @@
 import { chromium } from "playwright";
 import { existsSync } from "fs";
 import { loadWorkerConfig } from "./config";
-import { scrapeCorehub, type CorehubReferral } from "./corehub-scraper";
-import { lookupObvBrowser, type ObvBrowserResult } from "./obv-lookup";
+import { openReferral, scrapeCorehub, type CorehubReferral } from "./corehub-scraper";
+import { lookupObv, type ObvBrowserResult } from "./obv-lookup";
 import { evaluateIdvDecision } from "../domain/decision-engine";
 import type { DecisionConfig } from "../domain/motor-idv";
 
@@ -25,12 +25,14 @@ import type { DecisionConfig } from "../domain/motor-idv";
 const BENCHMARK_REFERRAL: CorehubReferral = {
   externalCaseId: "DEMO-COREHUB-001",
   registrationNumber: "MH02CB1234",
+  quoteId: null,
   make: "Maruti Suzuki",
   model: "Baleno",
   variant: "ZETA",
   fuelType: "Petrol",
   cc: "1197",
   requestedIdv: 600000,
+  yom: 2022,
   rawValues: {
     caseId: "DEMO-COREHUB-001",
     registration: "MH02CB1234",
@@ -40,7 +42,9 @@ const BENCHMARK_REFERRAL: CorehubReferral = {
     fuel: "Petrol",
     cc: "1197",
     requestedIdv: "₹6,00,000",
+    yom: "2022",
   },
+  vehicleDetails: null,
 };
 
 const DEFAULT_TEST_CONFIG: DecisionConfig = {
@@ -99,7 +103,7 @@ async function main() {
     try {
       const corehubResult = await scrapeCorehub(page, context, config, runId);
       if (corehubResult.success && corehubResult.referrals.length > 0) {
-        targetReferral = corehubResult.referrals[0];
+        targetReferral = await openReferral(page, config, corehubResult.referrals[0]);
         referralSource = `Live CoreHub (Found ${corehubResult.referrals.length} active referrals)`;
         console.log(`✅ Using live CoreHub referral: ${targetReferral.externalCaseId}`);
       } else {
@@ -117,7 +121,7 @@ async function main() {
   console.log("\n📋 Target Referral Details:");
   console.log(`   Source:          ${referralSource}`);
   console.log(`   Case ID:         ${targetReferral.externalCaseId}`);
-  console.log(`   Vehicle:         ${targetReferral.make} ${targetReferral.model} ${targetReferral.variant}`);
+  console.log(`   Vehicle:         ${targetReferral.make} ${targetReferral.model} ${targetReferral.variant} (${targetReferral.yom ?? "YOM unknown"})`);
   console.log(`   Registration:    ${targetReferral.registrationNumber || "N/A"}`);
   console.log(`   Requested IDV:   ₹${targetReferral.requestedIdv?.toLocaleString("en-IN") || "N/A"}\n`);
 
@@ -127,14 +131,11 @@ async function main() {
     make: targetReferral.make || "Maruti Suzuki",
     model: targetReferral.model || "Baleno",
     variant: targetReferral.variant || "Zeta",
+    year: targetReferral.yom ?? undefined,
+    fuel: targetReferral.fuelType,
   };
 
-  const obvResult: ObvBrowserResult = await lookupObvBrowser(
-    page,
-    obvVehicle,
-    config,
-    runId
-  );
+  const obvResult: ObvBrowserResult = await lookupObv(obvVehicle);
 
   console.log("\n📊 OBV Valuation Result:");
   console.log(`   Success:         ${obvResult.success ? "✅ YES" : "❌ NO"}`);
@@ -142,7 +143,7 @@ async function main() {
   console.log(`   Benchmark IDV:   ${obvResult.idv ? `₹${obvResult.idv.toLocaleString("en-IN")}` : "None"}`);
   console.log(`   Latency:         ${obvResult.latencyMs} ms`);
   console.log(`   Result URL:      ${obvResult.sourceUrl || "N/A"}`);
-  console.log(`   Evidence Frames: ${obvResult.evidence.length} screenshots saved`);
+  console.log(`   Resolved MMV:    ${JSON.stringify((obvResult.raw as { resolved?: unknown } | undefined)?.resolved ?? null)}`);
 
   if (obvResult.conditions) {
     console.log("\n🏆 Extracted Condition Tiers:");
@@ -158,7 +159,7 @@ async function main() {
   }
 
   if (!obvResult.success || !obvResult.idv) {
-    console.error("\n❌ OBV lookup did not return a valid IDV. Please check the screenshots in evidence/ for details.");
+    console.error(`\n❌ OBV lookup did not return a valid IDV: ${obvResult.reasonCode} ${JSON.stringify(obvResult.raw ?? {})}`);
     await page.waitForTimeout(3000);
     await browser.close();
     process.exit(1);

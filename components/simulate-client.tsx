@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, ChevronsUpDown, Compass, Globe, Minus, PencilLine, Plus, Save, Square } from "lucide-react";
 import {
-  POPULAR_VEHICLES,
   COREHUB_BENCHMARK_PRESETS,
   analyzeDecisionAllowance,
   type CorehubPreset,
@@ -27,8 +26,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
-import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/motion/tabs";
+import { StatefulButton, type ButtonState } from "@/components/motion/button/stateful";
+import { cn } from "@/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { money, vehicleName } from "@/lib/format";
 import { notify } from "@/lib/notify";
@@ -57,10 +57,7 @@ type StreamEvent =
   | ({ type: "result"; success: boolean } & LookupResult)
   | { type: "error"; error: string; reasonCode?: string };
 
-const YEARS = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016];
 const FUELS = ["Petrol", "Diesel", "CNG", "Electric"];
-const EXTRA_MODELS = ["Fortuner", "Innova Crysta", "Scorpio-N", "XUV700", "Other"];
-const MAKES = [...new Set([...POPULAR_VEHICLES.map((v) => v.make), "Mahindra", "Toyota", "Volkswagen"]), "Other"];
 const KMS_DRIVEN = "15000"; // no UI input; sent as the OBV lookup default
 const OBV_HOME = "https://www.orangebookvalue.com";
 const SOURCE_LABEL: Record<string, string> = {
@@ -73,13 +70,37 @@ const SOURCE_LABEL: Record<string, string> = {
 const withCurrent = (list: string[], current: string) => [...new Set(current && !list.includes(current) ? [current, ...list] : list)];
 const clock = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const band = (r: { min: number; max: number }) => `${money(r.min)} – ${money(r.max)}`;
-const findEntry = (make: string, model: string) =>
-  POPULAR_VEHICLES.find((v) => v.make.toLowerCase() === make.toLowerCase() && v.model.toLowerCase() === model.toLowerCase());
+
+/** OBV's own make → model → year → variant catalog. null = not queried yet / loading; [] = unavailable. */
+function useObvOptions(query: Record<string, string | number> | null) {
+  const [options, setOptions] = useState<string[] | null>(null);
+  const key = query ? new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)])).toString() : null;
+  useEffect(() => {
+    setOptions(null);
+    if (key === null) return;
+    const ctrl = new AbortController();
+    fetch(`/api/obv/options?${key}`, { signal: ctrl.signal })
+      .then((r) => r.json())
+      .then((d) => setOptions(d.options ?? []))
+      .catch(() => !ctrl.signal.aborted && setOptions([]));
+    return () => ctrl.abort();
+  }, [key]);
+  return options;
+}
+
+/** Snap a value to OBV's exact spelling (CoreHub sends e.g. "VOLKSWAGEN"); auto-pick a sole option. */
+function useCanonical(list: string[] | null, value: string, set: (v: string) => void) {
+  useEffect(() => {
+    if (!list?.length) return;
+    const match = value ? list.find((o) => o.toLowerCase() === value.toLowerCase()) : list.length === 1 ? list[0] : undefined;
+    if (match && match !== value) set(match);
+  }, [list, value, set]);
+}
 
 export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig: DecisionConfig; recentCases: RecentDbCase[] }) {
   const [make, setMake] = useState("Maruti Suzuki");
   const [model, setModel] = useState("Baleno");
-  const [variant, setVariant] = useState("Zeta Petrol");
+  const [variant, setVariant] = useState("ZETA 1.2");
   const [year, setYear] = useState(2022);
   const [fuel, setFuel] = useState("Petrol");
   const [requestedIdv, setRequestedIdv] = useState(600000);
@@ -89,6 +110,7 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const [runStatus, setRunStatus] = useState<RunStatus>("idle");
+  const [scenarioKey, setScenarioKey] = useState(0);
   const [steps, setSteps] = useState<RunStep[]>([]);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [runError, setRunError] = useState<string | null>(null);
@@ -104,8 +126,25 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const catalogModels = POPULAR_VEHICLES.filter((v) => v.make.toLowerCase() === make.toLowerCase()).map((m) => m.model);
-  const catalogVariants = findEntry(make, model)?.variants.map((v) => v.name) ?? [];
+  const obvMakes = useObvOptions({});
+  const obvModels = useObvOptions(make ? { make } : null);
+  const obvYears = useObvOptions(make && model ? { make, model } : null);
+  const obvVariants = useObvOptions(make && model && year ? { make, model, year } : null);
+  const setYearText = useCallback((v: string) => setYear(Number(v)), []);
+  useCanonical(obvMakes, make, setMake);
+  useCanonical(obvModels, model, setModel);
+  useCanonical(obvYears, String(year), setYearText);
+  useCanonical(obvVariants, variant, setVariant);
+  // Live lookup only for an MMV OBV actually lists; an unknown name would value the wrong car or none.
+  const offCatalog = (
+    [
+      ["make", make, obvMakes],
+      ["model", model, obvModels],
+      ["year", String(year), obvYears],
+      ["variant", variant, obvVariants],
+    ] as const
+  ).filter(([, v, list]) => list?.length && !list.includes(v)).map(([k, v]) => `${k} "${v}"`);
+  const mmvReady = obvVariants !== null && variant !== "" && offCatalog.length === 0;
   const log = (...entries: Omit<LogEntry, "id" | "time">[]) =>
     setLogs((prev) => [...prev, ...entries.map((e, i) => ({ ...e, id: `log-${Date.now()}-${prev.length + i}`, time: clock() }))]);
 
@@ -119,20 +158,14 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
 
   function handleMakeChange(next: string) {
     setMake(next);
-    const first = POPULAR_VEHICLES.find((v) => v.make.toLowerCase() === next.toLowerCase());
-    setModel(first?.model ?? "");
-    setVariant(first?.variants[0].name ?? "");
-    if (first) setFuel(first.variants[0].fuel);
+    setModel("");
+    setVariant("");
     resetValuation();
   }
 
   function handleModelChange(next: string) {
     setModel(next);
-    const v = findEntry(make, next)?.variants[0];
-    if (v) {
-      setVariant(v.name);
-      setFuel(v.fuel);
-    }
+    setVariant("");
     resetValuation();
   }
 
@@ -168,6 +201,7 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
   );
 
   function applyPreset(preset: CorehubPreset) {
+    setScenarioKey((k) => k + 1);
     setMake(preset.make);
     setModel(preset.model);
     setVariant(preset.variant);
@@ -191,6 +225,7 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
   }
 
   function applyDbCase(c: RecentDbCase) {
+    setScenarioKey((k) => k + 1);
     if (c.make_raw) setMake(c.make_raw);
     if (c.model_raw) setModel(c.model_raw);
     if (c.variant_raw) setVariant(c.variant_raw);
@@ -334,6 +369,8 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
   }
 
   const running = runStatus === "running";
+  const runFlash = useFlash(runStatus === "done" ? "success" : runStatus === "failed" ? "error" : null);
+  const saveFlash = useFlash(savedCase?.id ?? null);
   const vehicle = `${vehicleName(make, model, variant)} (${year})`;
   const sourceLabel = liveLookupResult?.reasonCode ? (SOURCE_LABEL[liveLookupResult.reasonCode] ?? liveLookupResult.reasonCode) : benchmarkIdv ? "Manual benchmark" : null;
   const summary =
@@ -348,11 +385,35 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
     );
   const selectedPreset = COREHUB_BENCHMARK_PRESETS.find((p) => p.id === source);
   const selectedCase = recentCases.find((c) => c.id === source);
+  // OBV-backed dropdown. list: undefined = parent not picked, null = loading, [] = catalogue unreachable (free text).
+  const obvSelect = (id: string, value: string, list: string[] | null | undefined, onChange: (v: string) => void, placeholder: string, example: string) =>
+    !list ? (
+      <Select disabled>
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue placeholder={list === null ? "Loading…" : placeholder} />
+        </SelectTrigger>
+      </Select>
+    ) : list.length > 0 ? (
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger id={id} className="w-full"><SelectValue placeholder={placeholder} /></SelectTrigger>
+        <SelectContent><SelectGroup>{withCurrent(list, value).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectGroup></SelectContent>
+      </Select>
+    ) : (
+      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={example} />
+    );
   const runButton = (label = "Run live OBV") => (
-    <Button size="sm" onClick={runLiveObvLookup} disabled={running}>
-      <Globe data-icon="inline-start" />
+    <StatefulButton
+      size="sm"
+      state={running ? "loading" : (runFlash ?? "idle")}
+      loadingText="Running…"
+      successText="Valuation ready"
+      errorText="Lookup failed"
+      icon={<Globe className="size-4" />}
+      onClick={runLiveObvLookup}
+      disabled={running || !mmvReady}
+    >
       {label}
-    </Button>
+    </StatefulButton>
   );
 
   return (
@@ -365,20 +426,27 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
         summary={summary}
         actions={
           <>
-            {running ? (
-              <Button size="sm" variant="outline" onClick={() => abortRef.current?.abort()}>
+            {running && (
+              <Button size="sm" variant="outline" onClick={() => abortRef.current?.abort()} className="duration-200 animate-in fade-in zoom-in-95">
                 <Square data-icon="inline-start" />
                 Cancel
               </Button>
-            ) : (
-              runButton()
             )}
-            <Button size="sm" variant="outline" onClick={persistScenario} disabled={isSaving || !activeSpectrum}>
-              {isSaving ? <Spinner data-icon="inline-start" /> : <Save data-icon="inline-start" />}
+            {runButton()}
+            <StatefulButton
+              size="sm"
+              variant="outline"
+              state={isSaving ? "loading" : saveFlash ? "success" : ("idle" as ButtonState)}
+              loadingText="Saving…"
+              successText="Saved"
+              icon={<Save className="size-4" />}
+              onClick={persistScenario}
+              disabled={isSaving || !activeSpectrum}
+            >
               Save as case
-            </Button>
+            </StatefulButton>
             {savedCase && (
-              <Button asChild size="sm" variant="ghost">
+              <Button asChild size="sm" variant="ghost" className="duration-300 animate-in fade-in slide-in-from-left-2">
                 <Link href={`/referrals/${savedCase.id}`}>
                   {savedCase.external_case_id}
                   <ArrowRight data-icon="inline-end" />
@@ -390,12 +458,13 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
       />
 
       <div className="grid items-start gap-4 xl:grid-cols-[400px_minmax(0,1fr)]">
+        <div className="duration-500 animate-in fade-in blur-in-sm slide-in-from-bottom-2 fill-mode-backwards">
         <Card>
           <CardHeader>
             <CardTitle>Case input</CardTitle>
             <CardDescription>CoreHub intake inputs. Changing the vehicle clears the valuation.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent key={scenarioKey} className={cn(scenarioKey > 0 && "duration-500 animate-in fade-in blur-in-sm")}>
             <FieldGroup className="gap-4">
               <Field>
                 <FieldLabel htmlFor="sim-source">Load scenario</FieldLabel>
@@ -472,41 +541,26 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
               <div className="grid grid-cols-2 gap-3">
                 <Field>
                   <FieldLabel htmlFor="sim-make">Make</FieldLabel>
-                  <Select value={make} onValueChange={handleMakeChange}>
-                    <SelectTrigger id="sim-make" className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectGroup>{withCurrent(MAKES, make).map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectGroup></SelectContent>
-                  </Select>
+                  {obvSelect("sim-make", make, obvMakes, handleMakeChange, "Select make", "e.g. Volkswagen")}
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="sim-model">Model</FieldLabel>
-                  {catalogModels.length > 0 ? (
-                    <Select value={model} onValueChange={handleModelChange}>
-                      <SelectTrigger id="sim-model" className="w-full"><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectGroup>{withCurrent([...catalogModels, ...EXTRA_MODELS], model).map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectGroup></SelectContent>
-                    </Select>
-                  ) : (
-                    <Input id="sim-model" value={model} onChange={(e) => handleModelChange(e.target.value)} placeholder="e.g. Fortuner" />
-                  )}
+                  {obvSelect("sim-model", model, make ? obvModels : undefined, handleModelChange, make ? "Select model" : "Pick make first", "e.g. Tiguan")}
                 </Field>
               </div>
               <Field>
                 <FieldLabel htmlFor="sim-variant">Variant</FieldLabel>
-                {catalogVariants.length > 0 ? (
-                  <Select value={variant} onValueChange={(v) => { setVariant(v); resetValuation(); }}>
-                    <SelectTrigger id="sim-variant" className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectGroup>{withCurrent([...catalogVariants, "Custom Variant"], variant).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectGroup></SelectContent>
-                  </Select>
-                ) : (
-                  <Input id="sim-variant" value={variant} onChange={(e) => { setVariant(e.target.value); resetValuation(); }} placeholder="e.g. 2.7 4x2 AT" />
+                {obvSelect("sim-variant", variant, make && model ? obvVariants : undefined, (v) => { setVariant(v); resetValuation(); }, model ? "Select variant" : "Pick model first", "e.g. Elegance 2.0 TSI DSG")}
+                {offCatalog.length > 0 && (
+                  <FieldDescription className="text-destructive">
+                    Not in OBV catalogue: {offCatalog.join(", ")}. Pick a listed option to run a live lookup.
+                  </FieldDescription>
                 )}
               </Field>
               <div className="grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)]">
                 <Field>
                   <FieldLabel htmlFor="sim-year">YOM</FieldLabel>
-                  <Select value={String(year)} onValueChange={(v) => { setYear(Number(v)); resetValuation(); }}>
-                    <SelectTrigger id="sim-year" className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectGroup>{withCurrent(YEARS.map(String), String(year)).map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}</SelectGroup></SelectContent>
-                  </Select>
+                  {obvSelect("sim-year", String(year), make && model ? obvYears : undefined, (v) => { setYear(Number(v)); resetValuation(); }, "Year", "2024")}
                 </Field>
                 <Field>
                   <FieldLabel id="sim-fuel">Fuel</FieldLabel>
@@ -595,8 +649,10 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
             </FieldGroup>
           </CardContent>
         </Card>
+        </div>
 
-        <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4 delay-100 duration-500 animate-in fade-in blur-in-sm slide-in-from-bottom-2 fill-mode-backwards">
+          <div key={analysis && activeSpectrum ? "result" : running ? "loading" : "empty"} className="flex flex-col gap-4 duration-300 animate-in fade-in slide-in-from-bottom-1">
           {analysis && activeSpectrum ? (
             <>
               <VerdictCard analysis={analysis} explanation={explanation} />
@@ -639,8 +695,9 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
               </Empty>
             </Card>
           )}
+          </div>
 
-          <Tabs defaultValue="spectrum">
+          <Tabs defaultValue="spectrum" variant="segment">
             <TabsList className="w-full sm:w-fit">
               <TabsTrigger value="spectrum">Condition spectrum</TabsTrigger>
               <TabsTrigger value="log">Pipeline log</TabsTrigger>
@@ -668,4 +725,16 @@ export function SimulateClient({ decisionConfig, recentCases }: { decisionConfig
       </div>
     </div>
   );
+}
+
+/** Holds a transient value (e.g. a button's success state) for `ms`, then clears it. */
+function useFlash<T>(value: T | null, ms = 1600) {
+  const [v, setV] = useState<T | null>(null);
+  useEffect(() => {
+    if (value == null) return;
+    setV(value);
+    const t = setTimeout(() => setV(null), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
 }

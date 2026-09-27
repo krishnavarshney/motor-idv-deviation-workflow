@@ -6,8 +6,8 @@
  * 2. Navigate to Referral tab — if the session is valid we skip login entirely
  * 3. If the session is expired or missing, perform a fresh login
  * 4. Save the session after every successful authentication
- * 5. Extract referral rows using configurable selectors
- * 6. Return structured referral data
+ * 5. List pending 4W proposals referred for IDV limits (columns mapped by header text)
+ * 6. openReferral: click a row, read the vehicle from the quote API response (read-only)
  */
 
 import type { Page, BrowserContext } from "playwright";
@@ -17,17 +17,23 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 
 export interface CorehubReferral {
-  /** Stable external case identifier from CoreHub */
+  /** Proposal ID, e.g. P000000062392 */
   externalCaseId: string;
   registrationNumber: string | null;
+  /** Vehicle fields below are null until openReferral reads the quote */
+  quoteId: string | null;
   make: string | null;
   model: string | null;
   variant: string | null;
   fuelType: string | null;
   cc: string | null;
   requestedIdv: number | null;
-  /** Raw text values before parsing, for audit */
+  /** Year of manufacture */
+  yom: number | null;
+  /** Listing row text by column header, for audit */
   rawValues: Record<string, string>;
+  /** quote.vehicle_details as CoreHub returned it, for audit */
+  vehicleDetails: Record<string, unknown> | null;
 }
 
 export interface CorehubScrapeResult {
@@ -207,36 +213,25 @@ async function loginToCorehub(
 
 // ─── Table Extraction ───────────────────────────────────────────────────
 
-/**
- * Extract cell text from a row using the given selector.
- * Returns trimmed text or null.
- */
-async function cellText(
-  row: ReturnType<Page["locator"]>,
-  selector: string
-): Promise<string | null> {
-  try {
-    const el = row.locator(selector).first();
-    const text = await el.innerText({ timeout: 2000 });
-    return text?.trim() || null;
-  } catch {
-    return null;
-  }
+/** First plausible 4-digit year in the value ("2021", "12/2021", "Mfg 2021"), else null. */
+export function parseYom(raw: string | null): number | null {
+  const year = Number(raw?.match(/\b(19|20)\d{2}\b/)?.[0]);
+  return year >= 1990 && year <= new Date().getFullYear() + 1 ? year : null;
+}
+
+/** Only referrals this worker handles: pending four-wheeler proposals referred for IDV limits. */
+export function isIdvDeviationReferral(row: Record<string, string>): boolean {
+  return (
+    /^P\d+$/.test(row["proposal / endo id"] ?? "") &&
+    /^4w$/i.test(row["product"] ?? "") &&
+    /pending/i.test(row["status"] ?? "") &&
+    /\bidv\b/i.test(row["reason of nstp"] ?? "")
+  );
 }
 
 /**
- * Parse a string to a number, returning null if not valid.
- */
-function parseIdv(raw: string | null): number | null {
-  if (!raw) return null;
-  // Remove currency symbols, commas, spaces
-  const cleaned = raw.replace(/[₹,\s]/g, "");
-  const num = Number(cleaned);
-  return Number.isFinite(num) ? num : null;
-}
-
-/**
- * Scrape the CoreHub Referral tab for referral rows.
+ * Read the referral listing. Cells are keyed by lower-cased header text
+ * ("reg number", "proposal / endo id", "product", "reason of nstp", "status", ...).
  */
 async function scrapeReferralTable(
   page: Page,
@@ -246,67 +241,97 @@ async function scrapeReferralTable(
 ): Promise<CorehubReferral[]> {
   console.log("📋 Extracting referral rows...");
 
-  // Wait for the table to appear
   try {
     await page.waitForSelector(selectors.tableRow, { timeout: 15000 });
   } catch {
     console.warn("⚠ No referral rows found — table may be empty or selector mismatch");
-    evidence.push(
-      await captureEvidence(page, "corehub_no_rows", runId)
-    );
+    evidence.push(await captureEvidence(page, "corehub_no_rows", runId));
     return [];
   }
 
-  const rows = page.locator(selectors.tableRow);
-  const count = await rows.count();
-  console.log(`📊 Found ${count} referral rows`);
+  // ponytail: first page only (20 rows, newest first). Page through if the queue outgrows it.
+  const rows = await page.evaluate((rowSel) => {
+    const headers = Array.from(document.querySelectorAll("table thead th")).map((th) =>
+      (th as HTMLElement).innerText.trim().toLowerCase()
+    );
+    return Array.from(document.querySelectorAll(rowSel)).map((tr) =>
+      Object.fromEntries(
+        Array.from(tr.querySelectorAll("td")).map((td, i) => [headers[i] ?? `col${i}`, (td as HTMLElement).innerText.trim()])
+      )
+    );
+  }, selectors.tableRow);
 
-  const referrals: CorehubReferral[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const row = rows.nth(i);
-
-    const rawCaseId = await cellText(row, selectors.caseId);
-    if (!rawCaseId) continue; // Skip rows without a case ID
-
-    const rawReg = await cellText(row, selectors.registration);
-    const rawMake = await cellText(row, selectors.make);
-    const rawModel = await cellText(row, selectors.model);
-    const rawVariant = await cellText(row, selectors.variant);
-    const rawFuel = await cellText(row, selectors.fuel);
-    const rawCc = await cellText(row, selectors.cc);
-    const rawIdv = await cellText(row, selectors.requestedIdv);
-
-    referrals.push({
-      externalCaseId: rawCaseId,
-      registrationNumber: rawReg,
-      make: rawMake,
-      model: rawModel,
-      variant: rawVariant,
-      fuelType: rawFuel,
-      cc: rawCc,
-      requestedIdv: parseIdv(rawIdv),
-      rawValues: {
-        caseId: rawCaseId ?? "",
-        registration: rawReg ?? "",
-        make: rawMake ?? "",
-        model: rawModel ?? "",
-        variant: rawVariant ?? "",
-        fuel: rawFuel ?? "",
-        cc: rawCc ?? "",
-        requestedIdv: rawIdv ?? "",
-      },
-    });
-  }
+  const referrals: CorehubReferral[] = rows.filter(isIdvDeviationReferral).map((row) => ({
+    externalCaseId: row["proposal / endo id"],
+    registrationNumber: row["reg number"] && row["reg number"] !== "-" ? row["reg number"] : null,
+    quoteId: null,
+    make: null,
+    model: null,
+    variant: null,
+    fuelType: null,
+    cc: null,
+    requestedIdv: null,
+    yom: null,
+    rawValues: row,
+    vehicleDetails: null,
+  }));
+  console.log(`📊 ${rows.length} rows listed, ${referrals.length} pending 4W IDV referrals`);
 
   evidence.push(
     await captureEvidence(page, "corehub_referrals_extracted", runId, {
-      rowCount: count,
+      rowCount: rows.length,
       extractedCount: referrals.length,
     })
   );
 
   return referrals;
+}
+
+type Quote = { id?: string; proposal_id?: string; vehicle_details?: Record<string, unknown> };
+
+/** The quote object in an API body, if it belongs to this proposal (tolerates a {data: ...} wrapper). */
+export function findQuote(body: unknown, proposalId: string): Quote | null {
+  const b = body as { data?: unknown; result?: unknown } | null;
+  for (const c of [b, b?.data, b?.result] as (Quote | null | undefined)[]) {
+    if (c?.vehicle_details && c.proposal_id === proposalId) return c;
+  }
+  return null;
+}
+
+/** Vehicle fields from a CoreHub quote's vehicle_details. */
+export function vehicleFromQuote(quote: Quote): Pick<CorehubReferral, "quoteId" | "make" | "model" | "variant" | "fuelType" | "requestedIdv" | "yom" | "vehicleDetails"> {
+  const v = quote.vehicle_details ?? {};
+  const str = (k: string) => (v[k] == null || v[k] === "" ? null : String(v[k]));
+  return {
+    quoteId: quote.id ?? null,
+    make: str("make"),
+    model: str("model"),
+    variant: str("variant"),
+    fuelType: str("fuel_type"),
+    requestedIdv: Number(v.idv_value) || null,
+    yom: parseYom(str("manufacture_year")),
+    vehicleDetails: v,
+  };
+}
+
+/**
+ * Open a referral from the listing (read-only) and fill its vehicle fields from the quote API
+ * response the review page loads.
+ */
+export async function openReferral(page: Page, config: WorkerConfig, referral: CorehubReferral): Promise<CorehubReferral> {
+  await page.goto(config.corehubReferralUrl, { waitUntil: "domcontentloaded", timeout: config.navigationTimeoutMs });
+  const row = page.locator(config.corehubSelectors.tableRow).filter({ hasText: referral.externalCaseId }).first();
+  await row.waitFor({ timeout: 15000 });
+
+  const quoteResponse = page.waitForResponse(
+    async (r) =>
+      ["xhr", "fetch"].includes(r.request().resourceType()) &&
+      !!findQuote(await r.json().catch(() => null), referral.externalCaseId),
+    { timeout: config.navigationTimeoutMs }
+  );
+  await row.click();
+  const quote = findQuote(await (await quoteResponse).json(), referral.externalCaseId)!;
+  return { ...referral, ...vehicleFromQuote(quote) };
 }
 
 // ─── Main Entry ─────────────────────────────────────────────────────────
