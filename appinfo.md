@@ -31,3 +31,7 @@ A database password was previously exposed during setup and must be rotated befo
 - Deployment: Vercel.
 - External valuation: isolated OBV connector.
 - Decisioning: deterministic, explainable domain engine.
+
+## OBV integration status
+
+OBV publicly documents an Enterprise API integration panel and token generation, but the public documentation checked during development did not expose a canonical API endpoint path. The production connector therefore requires OBV_BASE_URL, OBV_API_TOKEN, and OBV_ENDPOINT_PATH and fails safely to manual review when they are not configured. Do not substitute a guessed endpoint or browser scraping.
