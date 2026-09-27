@@ -50,6 +50,13 @@ export interface ObvBrowserResult {
   raw?: unknown;
 }
 
+export interface ObvStep {
+  key: string;
+  label: string;
+  status: "running" | "done" | "failed";
+  detail?: string;
+}
+
 /**
  * Detect if the page is showing a CAPTCHA or bot-detection challenge.
  */
@@ -95,6 +102,110 @@ export function parseObvIdv(raw: string | null): number | null {
     return Math.round((numbers[0] + numbers[1]) / 2);
   }
   return numbers[0];
+}
+
+const OBV_ORIGIN = "https://www.orangebookvalue.com";
+// OBV's CDN 403s requests without a browser user agent.
+const OBV_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+};
+
+/**
+ * OBV's own cascading make → model → year → trim catalog (the JSON its search form uses).
+ * Returns exact names OBV accepts; an empty list means nothing matched.
+ */
+export async function fetchObvOptions(q: { make?: string; model?: string; year?: string | number }): Promise<string[]> {
+  const params = new URLSearchParams({ category_id: "1", api_version: "3" });
+  if (q.make) params.set("make", q.make);
+  if (q.make && q.model) params.set("model", q.model);
+  if (q.make && q.model && q.year) {
+    params.set("year", String(q.year));
+    params.set("check_obv", "1");
+  }
+  const res = await fetch(`${OBV_ORIGIN}/mmyt?${params}`, { headers: OBV_HEADERS, signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`OBV catalog HTTP ${res.status}`);
+  const { data } = (await res.json()) as { data?: unknown };
+  // Makes arrive as {name, selectable} with section headers; models/years as strings; trims under data.result.
+  const list: unknown[] = Array.isArray(data) ? data : ((data as { result?: unknown[] } | undefined)?.result ?? []);
+  const names = list.flatMap((d) =>
+    typeof d === "string" ? [d] : d && typeof d === "object" && (d as { selectable?: boolean }).selectable ? [String((d as { name: unknown }).name)] : []
+  );
+  return [...new Set(names)];
+}
+
+/**
+ * Valuation via OBV's result endpoint directly (~1-2s, no browser). The result page embeds every
+ * condition band as `all_prices["Good"]["range_from"] = "31,21,938"`. An MMV OBV doesn't know
+ * redirects (302) to the home page, reported as NO_RESULTS.
+ */
+export async function lookupObvHttp(vehicle: {
+  make: string;
+  model: string;
+  variant: string;
+  year?: string | number;
+  kmsDriven?: string | number;
+}): Promise<ObvBrowserResult> {
+  const started = Date.now();
+  const sourceUrl = `${OBV_ORIGIN}/result?car_sell_dealer`;
+  const fail = (reasonCode: ObvBrowserResult["reasonCode"], raw?: unknown): ObvBrowserResult => ({
+    success: false,
+    idv: null,
+    sourceUrl,
+    reasonCode,
+    latencyMs: Date.now() - started,
+    evidence: [],
+    raw,
+  });
+
+  const form = new URLSearchParams({
+    feature: "used",
+    customer_type: "dealer",
+    category: "1",
+    make: vehicle.make,
+    model: vehicle.model,
+    year: String(vehicle.year ?? ""),
+    trim: vehicle.variant,
+    kms_driven: String(vehicle.kmsDriven ?? "15000"),
+    city: "",
+    phone: "1111111111",
+    userType: "dealer",
+    transaction_type: "s",
+    is_taxi: "0",
+  });
+
+  let html: string;
+  try {
+    const res = await fetch(sourceUrl, {
+      method: "POST",
+      headers: { ...OBV_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
+      body: form,
+      redirect: "manual",
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.status >= 300 && res.status < 400) return fail("NO_RESULTS", { status: res.status });
+    if (!res.ok) return fail("NAVIGATION_ERROR", { status: res.status });
+    html = await res.text();
+  } catch (err) {
+    return fail(err instanceof Error && err.name === "TimeoutError" ? "TIMEOUT" : "NAVIGATION_ERROR", { error: String(err) });
+  }
+
+  const bands: Record<string, { from?: number; to?: number }> = {};
+  for (const m of html.matchAll(/all_prices\["([A-Za-z ]+)"\]\["range_(from|to)"\]\s*=\s*"([\d,]+)"/g)) {
+    (bands[m[1]] ??= {})[m[2] as "from" | "to"] = Number(m[3].replace(/,/g, ""));
+  }
+  const range = (label: string): ConditionRange | undefined => {
+    const b = bands[label];
+    if (!b?.from || !b?.to) return undefined;
+    const min = Math.min(b.from, b.to);
+    const max = Math.max(b.from, b.to);
+    return { min, max, midpoint: Math.round((min + max) / 2), raw: `₹${min.toLocaleString("en-IN")} - ₹${max.toLocaleString("en-IN")}` };
+  };
+  const conditions = { good: range("Good"), veryGood: range("Very Good"), excellent: range("Excellent") };
+  const idv = conditions.veryGood?.midpoint ?? conditions.good?.midpoint ?? conditions.excellent?.midpoint ?? null;
+  if (idv === null) return fail("PARSE_ERROR");
+
+  return { success: true, idv, conditions, sourceUrl, reasonCode: "SUCCESS", latencyMs: Date.now() - started, evidence: [], raw: { conditions } };
 }
 
 /**
@@ -153,8 +264,8 @@ async function fillField(
             tokens.some((tok: string) => o.text.toLowerCase().includes(tok))
           );
           if (tokenMatch) return tokenMatch.value;
-          // 5. Fallback: select 2nd option if placeholder is 1st
-          return options.length > 1 ? options[1].value : null;
+          // No match: fail loudly. Picking an arbitrary option valued the wrong vehicle.
+          return null;
         },
         { sel: selector, target: targetValLower }
       );
@@ -199,23 +310,33 @@ export async function lookupObvBrowser(
     kmsDriven?: string | number;
   },
   config: WorkerConfig,
-  runId: string
+  runId: string,
+  onStep?: (step: ObvStep) => void
 ): Promise<ObvBrowserResult> {
   const evidence: EvidenceArtifact[] = [];
   const started = Date.now();
   const selectors = config.obvSelectors;
+  // Progress hook for streaming callers; a throwing listener must never break the lookup.
+  const step = (key: string, label: string, status: ObvStep["status"] = "done", detail?: string) => {
+    try {
+      onStep?.({ key, label, status, detail });
+    } catch {}
+  };
 
   try {
     // Step 1: Navigate to OBV
+    step("navigate", "Opening OrangeBookValue", "running");
     console.log(`🔍 OBV lookup: ${vehicle.make} ${vehicle.model} ${vehicle.variant} (${vehicle.year ?? "2022"})`);
     await page.goto(config.obvSearchUrl, {
       waitUntil: "domcontentloaded",
       timeout: config.navigationTimeoutMs,
     });
     evidence.push(await captureEvidence(page, "obv_home", runId));
+    step("navigate", "Opened OrangeBookValue");
 
     // Step 2: Check for CAPTCHA
     if (await detectCaptcha(page)) {
+      step("captcha", "Captcha detected on OrangeBookValue", "failed");
       evidence.push(
         await captureEvidence(page, "obv_captcha_detected", runId)
       );
@@ -240,8 +361,10 @@ export async function lookupObvBrowser(
       await page.waitForTimeout(800);
     }
 
+    step("make", `Selecting ${vehicle.make}`, "running");
     const makeFilled = await fillField(page, selectors.makeInput, vehicle.make);
     if (!makeFilled) {
+      step("make", `Could not select make ${vehicle.make}`, "failed", selectors.makeInput);
       evidence.push(
         await captureEvidence(page, "obv_make_selector_fail", runId)
       );
@@ -256,8 +379,11 @@ export async function lookupObvBrowser(
       };
     }
 
+    step("make", `Selected ${vehicle.make}`);
     // Wait for model dropdown to populate after make selection
     await page.waitForTimeout(1000);
+
+    step("model", `Selecting ${vehicle.model}`, "running");
 
     const modelFilled = await fillField(
       page,
@@ -265,6 +391,7 @@ export async function lookupObvBrowser(
       vehicle.model
     );
     if (!modelFilled) {
+      step("model", `Could not select model ${vehicle.model}`, "failed", selectors.modelInput);
       evidence.push(
         await captureEvidence(page, "obv_model_selector_fail", runId)
       );
@@ -279,6 +406,7 @@ export async function lookupObvBrowser(
       };
     }
 
+    step("model", `Selected ${vehicle.model}`);
     await page.waitForTimeout(1000);
 
     // Optional Year dropdown (populated dynamically on OBV)
@@ -292,12 +420,14 @@ export async function lookupObvBrowser(
       await page.waitForTimeout(800);
     }
 
+    step("variant", `Selecting ${vehicle.variant || "variant"}`, "running");
     const variantFilled = await fillField(
       page,
       selectors.variantInput,
       vehicle.variant
     );
     if (!variantFilled) {
+      step("variant", `Could not select variant ${vehicle.variant}`, "failed", selectors.variantInput);
       evidence.push(
         await captureEvidence(page, "obv_variant_selector_fail", runId)
       );
@@ -328,13 +458,18 @@ export async function lookupObvBrowser(
       })
     );
 
+    step("variant", `Selected ${vehicle.variant || "variant"}`);
+    step("fields", "Vehicle details entered");
+
     // Step 4: Submit search
+    step("search", "Submitting valuation search", "running");
     try {
       await page.click(selectors.searchButton);
       await page.waitForLoadState("domcontentloaded", {
         timeout: config.obvLookupTimeoutMs,
       });
     } catch (err) {
+      step("search", "Valuation search timed out", "failed");
       evidence.push(
         await captureEvidence(page, "obv_search_timeout", runId)
       );
@@ -349,9 +484,11 @@ export async function lookupObvBrowser(
     }
 
     evidence.push(await captureEvidence(page, "obv_results_page", runId));
+    step("search", "Results page loaded");
 
     // Step 5: Check for CAPTCHA on results page
     if (await detectCaptcha(page)) {
+      step("captcha", "Captcha detected on results page", "failed");
       evidence.push(
         await captureEvidence(page, "obv_captcha_on_results", runId)
       );
@@ -376,6 +513,7 @@ export async function lookupObvBrowser(
       Record<"good" | "veryGood" | "excellent", ConditionRange>
     > = {};
 
+    step("conditions", "Reading condition bands", "running");
     for (const cond of targetConditions) {
       try {
         const clicked = await page.evaluate((targetLabel) => {
@@ -447,6 +585,7 @@ export async function lookupObvBrowser(
       null;
 
     if (primaryIdv !== null) {
+      step("conditions", `Read ${Object.keys(conditionValuations).length} condition bands`);
       evidence.push(
         await captureEvidence(page, "obv_conditions_extracted", runId, {
           conditions: conditionValuations,
@@ -474,6 +613,7 @@ export async function lookupObvBrowser(
     }
 
     // Fallback: check if standard single IDV element is present
+    step("conditions", "No condition bands found — reading single IDV", "running");
     try {
       const idvElement = page.locator(selectors.idvValue).first();
       await idvElement.waitFor({ timeout: 4000 });
@@ -481,6 +621,7 @@ export async function lookupObvBrowser(
       const idv = parseObvIdv(rawIdvText);
 
       if (idv !== null) {
+        step("conditions", "Read single IDV value");
         evidence.push(
           await captureEvidence(page, "obv_idv_extracted", runId, {
             rawText: rawIdvText,
@@ -501,6 +642,7 @@ export async function lookupObvBrowser(
     } catch {}
 
     // If neither conditions nor single IDV could be extracted
+    step("conditions", "Could not find a valuation on the results page", "failed");
     evidence.push(
       await captureEvidence(page, "obv_idv_selector_fail", runId)
     );
@@ -515,6 +657,7 @@ export async function lookupObvBrowser(
       evidence,
     };
   } catch (err) {
+    step("error", "Lookup error", "failed", err instanceof Error ? err.message : String(err));
     evidence.push(
       await captureEvidence(page, "obv_unknown_error", runId, {
         error: String(err),
