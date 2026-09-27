@@ -18,6 +18,7 @@ import { lookupObvBrowser, type ObvBrowserResult } from "./obv-lookup";
 import { captureEvidence, type EvidenceArtifact } from "./evidence";
 import { evaluateIdvDecision } from "../domain/decision-engine";
 import { loadDecisionConfig } from "../server/idv-config";
+import { reconcileConditionBands } from "./reconcile";
 import type { DecisionConfig } from "../domain/motor-idv";
 
 interface RunSummary {
@@ -283,6 +284,18 @@ export async function runWorker(
   let casesProcessed = 0;
   let casesErrored = 0;
 
+  // ── Step 0: Reconcile queued reviews against condition bands ────
+  // Needs no browser, so it runs even when CoreHub is unreachable.
+  console.log("\n🔁 Phase 0: Reconciling queued reviews against condition bands...");
+  try {
+    const r = await reconcileConditionBands(supabase, decisionConfig, { dryRun: config.dryRun, runId });
+    console.log(`   Checked ${r.checked}, ${config.dryRun ? "would approve" : "approved"} ${r.approved}`);
+  } catch (err) {
+    const errMsg = `Reconciliation failed: ${err}`;
+    console.error(`   ❌ ${errMsg}`);
+    errors.push(errMsg);
+  }
+
   // Launch browser (uses local Google Chrome if available, or playwright chromium)
   const browser = await chromium
     .launch({
@@ -458,6 +471,7 @@ export async function runWorker(
             fetchedIdv: obvResult.idv,
             vehicleConfidence: 0.9,
             providerStatus,
+            conditions: obvResult.conditions,
           },
           decisionConfig
         );

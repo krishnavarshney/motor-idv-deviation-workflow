@@ -23,6 +23,7 @@ The system is deliberately human-in-the-loop for the final underwriting action. 
 ## End-to-end workflow
 
 1. A scheduler or operator triggers an isolated worker run (`npm run worker`, `worker:live`, or `worker:visible`).
+   - Before launching a browser, the worker reconciles still-`queued` manual reviews against the decision engine: cases whose requested IDV lies inside a stored OBV condition band are auto-approved (`WITHIN_CONDITION_BAND`, dry-run logs candidates only). Reviews an underwriter has picked up are never touched.
 2. The worker launches a browser context (prefers system Chrome, falls back to Chromium) with reusable session storage if available.
 3. It signs into CoreHub (or reuses stored session) using runtime credentials.
 4. It navigates to the Referral tab and discovers active referral rows.
