@@ -1,0 +1,11 @@
+create or replace function public.set_updated_at() returns trigger language plpgsql set search_path=public as $$begin new.updated_at=now(); return new; end;$$;
+drop policy if exists referral_insert on public.referral_cases; drop policy if exists referral_update on public.referral_cases; drop policy if exists referrals_insert on public.referral_cases; drop policy if exists referrals_update on public.referral_cases;
+create policy referral_insert on public.referral_cases for insert to authenticated with check(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin')));
+create policy referral_update on public.referral_cases for update to authenticated using(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin'))) with check(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin')));
+drop policy if exists vehicle_insert on public.vehicle_resolutions; drop policy if exists vehicle_update on public.vehicle_resolutions;
+create policy vehicle_insert on public.vehicle_resolutions for insert to authenticated with check(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin')));
+create policy vehicle_update on public.vehicle_resolutions for update to authenticated using(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin'))) with check(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin')));
+drop policy if exists idv_insert on public.idv_checks; drop policy if exists idv_update on public.idv_checks;
+create policy idv_insert on public.idv_checks for insert to authenticated with check(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin')));
+create policy idv_update on public.idv_checks for update to authenticated using(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin'))) with check(exists(select 1 from public.profiles p where p.id=(select auth.uid()) and p.role in('operator','underwriter','admin')));
+drop index if exists idx_reviews_assignee;
