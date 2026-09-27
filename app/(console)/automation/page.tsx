@@ -8,9 +8,11 @@ import { DecisionBadge } from "@/components/status";
 import { CancelJobButton, FetchButton } from "@/components/job-buttons";
 import { JobProgress } from "@/components/job-progress";
 import { LiveRefresh } from "@/components/live-refresh";
+import { TestLookupSheet } from "@/components/test-lookup-sheet";
 import { getSessionProfile } from "@/lib/api-auth";
 import { can } from "@/lib/authz";
 import { getWorkerStatus } from "@/lib/worker-status";
+import { loadDecisionConfig } from "@/src/server/idv-config";
 import { dateTime } from "@/lib/format";
 
 export const metadata = { title: "Automation runs" };
@@ -42,6 +44,18 @@ export default async function Runs() {
   const canRun = can(profile?.role, "run_jobs");
   const fetchReason = !worker.online ? "Worker offline" : active.some((j) => j.type === "fetch") ? "Fetch already in progress" : null;
 
+  const canTest = can(profile?.role, "test_lookup");
+  const [decisionConfig, { data: recentCases }] = canTest
+    ? await Promise.all([
+        loadDecisionConfig(supabase),
+        supabase
+          .from("referral_cases")
+          .select("id, external_case_id, make_raw, model_raw, variant_raw, requested_idv, referral_status, metadata")
+          .order("created_at", { ascending: false })
+          .limit(8),
+      ])
+    : [null, { data: null }];
+
   return (
     <>
       <LiveRefresh tables={["automation_jobs"]} />
@@ -49,7 +63,12 @@ export default async function Runs() {
         eyebrow="Automation"
         title="Runs"
         description="Every CoreHub fetch and evaluation, whether started here or by a schedule."
-        actions={canRun ? <FetchButton disabledReason={fetchReason} /> : undefined}
+        actions={
+          <>
+            {canTest && decisionConfig && <TestLookupSheet decisionConfig={decisionConfig} recentCases={recentCases ?? []} />}
+            {canRun && <FetchButton disabledReason={fetchReason} />}
+          </>
+        }
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
