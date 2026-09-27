@@ -76,6 +76,17 @@ export const POPULAR_VEHICLES: VehicleCatalogEntry[] = [
     ],
   },
   {
+    make: "Mahindra",
+    model: "Scorpio-N",
+    variants: [
+      { name: "Z8L Diesel AT", exShowroom: 2450000, fuel: "Diesel", cc: 2184 },
+      { name: "Z8 Diesel MT", exShowroom: 2100000, fuel: "Diesel", cc: 2184 },
+      { name: "Z4 Diesel MT", exShowroom: 1650000, fuel: "Diesel", cc: 2184 },
+      { name: "LX 4-Str Hard Top Diesel", exShowroom: 2150000, fuel: "Diesel", cc: 2184 },
+      { name: "Z2 Petrol MT", exShowroom: 1380000, fuel: "Petrol", cc: 1997 },
+    ],
+  },
+  {
     make: "Kia",
     model: "Seltos",
     variants: [
