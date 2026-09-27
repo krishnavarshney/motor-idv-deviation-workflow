@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { Inbox } from "lucide-react";
+import { Inbox, Sparkles } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DecisionBadge } from "@/components/status";
 import { EmptyRow } from "@/components/console";
 import { dateTime, humanize, money, vehicleName } from "@/lib/format";
 
-export function CaseTable({ rows, emptyText = "Nothing matches yet." }: { rows: any[]; emptyText?: string }) {
+export function CaseTable({ rows, emptyText = "Nothing matches yet.", newIds = [] }: { rows: any[]; emptyText?: string; newIds?: string[] }) {
   return (
     <Table>
       <TableHeader>
@@ -21,9 +22,17 @@ export function CaseTable({ rows, emptyText = "Nothing matches yet." }: { rows: 
         {rows.map((x) => (
           <TableRow key={x.id}>
             <TableCell className="pl-4">
-              <Link href={"/referrals/" + x.id} className="font-medium hover:underline">
-                {x.external_case_id}
-              </Link>
+              <div className="flex items-center gap-2">
+                <Link href={"/referrals/" + x.id} className="font-medium hover:underline">
+                  {x.external_case_id}
+                </Link>
+                {newIds.includes(x.id) && (
+                  <Badge variant="info">
+                    <Sparkles data-icon="inline-start" />
+                    New
+                  </Badge>
+                )}
+              </div>
               <div className="text-xs text-muted-foreground">{dateTime(x.received_at)}</div>
             </TableCell>
             <TableCell>
