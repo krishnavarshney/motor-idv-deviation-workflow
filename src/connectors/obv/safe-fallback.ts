@@ -1,0 +1,2 @@
+import type {ObvConnector,ObvLookupInput,ObvLookupResult} from "./types";
+export class SafeObvFallback implements ObvConnector{async lookup(_input:ObvLookupInput):Promise<ObvLookupResult>{return{provider:"obv",success:false,currency:"INR",latencyMs:0,reasonCode:"PROVIDER_UNAVAILABLE"}}}
