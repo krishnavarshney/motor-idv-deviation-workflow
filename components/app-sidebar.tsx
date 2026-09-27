@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronsUpDown, LogOut, ShieldCheck } from "lucide-react";
+import { ChevronsUpDown, LogOut, ShieldCheck, Monitor, Moon, Sun, UserRound } from "lucide-react";
+import { useTheme } from "next-themes";
 import {
   Sidebar,
   SidebarContent,
@@ -24,8 +25,14 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { activeHref, visibleNav } from "@/components/nav";
 import type { Role } from "@/lib/authz";
 
@@ -42,7 +49,9 @@ export function AppSidebar({
 }) {
   const pathname = usePathname();
   const active = activeHref(pathname);
-  const initials = userEmail.slice(0, 2).toUpperCase();
+  const { theme, setTheme } = useTheme();
+  const displayName = fullName || userEmail;
+  const initials = (fullName || userEmail).slice(0, 2).toUpperCase();
 
   return (
     <Sidebar collapsible="icon">
@@ -93,14 +102,53 @@ export function AppSidebar({
                     <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left leading-tight">
-                    <span className="truncate text-sm font-medium">{userEmail}</span>
-                    <span className="truncate text-xs text-muted-foreground">Underwriting operations</span>
+                    <span className="truncate text-sm font-medium">{displayName}</span>
+                    <span className="truncate text-xs text-muted-foreground capitalize">{role ?? "No access"}</span>
                   </div>
                   <ChevronsUpDown className="ml-auto" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-(--radix-dropdown-menu-trigger-width) min-w-56">
-                <DropdownMenuLabel className="truncate font-normal text-muted-foreground">{userEmail}</DropdownMenuLabel>
+                <DropdownMenuLabel className="flex flex-col gap-1 font-normal">
+                  <span className="truncate text-sm font-medium">{displayName}</span>
+                  <span className="truncate text-xs text-muted-foreground">{userEmail}</span>
+                  {role && (
+                    <Badge variant="secondary" className="capitalize">
+                      {role}
+                    </Badge>
+                  )}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem asChild>
+                    <Link href="/account">
+                      <UserRound />
+                      Profile
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <Sun />
+                      Theme
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
+                        <DropdownMenuRadioItem value="light">
+                          <Sun />
+                          Light
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="dark">
+                          <Moon />
+                          Dark
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="system">
+                          <Monitor />
+                          System
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
                   <form action="/auth/signout" method="post">

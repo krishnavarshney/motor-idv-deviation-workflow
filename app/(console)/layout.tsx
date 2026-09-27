@@ -7,7 +7,6 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { Separator } from "@/components/ui/separator";
 import { AppSidebar } from "@/components/app-sidebar";
 import { CommandMenu } from "@/components/command-menu";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { WorkerStatusPill } from "@/components/worker-status-pill";
 import { getWorkerStatus } from "@/lib/worker-status";
 
@@ -40,7 +39,6 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
           <CommandMenu role={role} />
           <div className="ml-auto flex items-center gap-2">
             <WorkerStatusPill initialLastSeen={worker.lastSeenAt} />
-            <ThemeToggle />
           </div>
         </header>
         <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-4 md:p-6">{children}</div>
