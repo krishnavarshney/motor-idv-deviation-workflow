@@ -1,10 +1,6 @@
 name: IDV Deviation Worker
 
 on:
-  schedule:
-    # Run every 10 minutes during business hours IST (Mon-Sat)
-    # 03:30 - 13:30 UTC = 09:00 - 19:00 IST
-    - cron: '*/10 3-13 * * 1-6'
   workflow_dispatch:
     inputs:
       dry_run:
