@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_USE_SYSTEM_CA=1 next dev",
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
@@ -12,7 +12,7 @@
     "worker:visible": "PLAYWRIGHT_HEADLESS=false tsx --env-file=.env src/worker/run.ts",
     "worker:login": "tsx --env-file=.env src/worker/auth-corehub.ts",
     "test:obv": "tsx --env-file=.env src/worker/test-referral-obv.ts",
-    "test": "tsx tests/decision-engine.test.ts && tsx tests/vehicle-resolution.test.ts && tsx tests/workflow.test.ts && tsx tests/simulator.test.ts && tsx tests/reconcile.test.ts"
+    "test": "tsx tests/decision-engine.test.ts && tsx tests/vehicle-resolution.test.ts && tsx tests/workflow.test.ts && tsx tests/simulator.test.ts && tsx tests/reconcile.test.ts && tsx tests/obv-match.test.ts && tsx tests/corehub-referral.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",
