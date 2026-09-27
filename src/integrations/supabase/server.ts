@@ -1,3 +1,0 @@
-import {createServerClient} from "@supabase/ssr";
-import {parse,serialize} from "cookie";
-export function createSupabaseServerClient(request:Request,responseHeaders:Headers){const url=process.env.SUPABASE_URL??"https://oyjirtozeoeeacogldpx.supabase.co";const key=process.env.SUPABASE_PUBLISHABLE_KEY??"";return createServerClient(url,key,{cookies:{getAll(){return Object.entries(parse(request.headers.get("cookie")??"")).map(([name,value])=>({name,value:value??""}))},setAll(cookies){for(const c of cookies)responseHeaders.append("set-cookie",serialize(c.name,c.value,{...c.options,path:"/"}))}}})}
