@@ -30,13 +30,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   });
   if (blocked) return NextResponse.json({ error: blocked }, { status: 409 });
 
+  // Deactivation also blocks sign-in, not just RLS privileges. Do this first:
+  // if it fails, don't report success while the user can still sign in.
+  if (patch.is_active !== undefined) {
+    const { error: banError } = await admin.auth.admin.updateUserById(id, {
+      ban_duration: patch.is_active ? "none" : "876000h",
+    });
+    if (banError) return NextResponse.json({ error: `Could not update sign-in access: ${banError.message}` }, { status: 502 });
+  }
+
   const { error } = await admin.from("profiles").update(patch).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  // Deactivation also blocks sign-in, not just RLS privileges.
-  if (patch.is_active !== undefined) {
-    await admin.auth.admin.updateUserById(id, { ban_duration: patch.is_active ? "none" : "876000h" });
-  }
 
   await supabase.from("audit_events").insert({
     event_type: "team_member_updated",

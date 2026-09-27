@@ -21,6 +21,7 @@ async function send(url: string, method: string, body: unknown) {
   const r = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || "Request failed");
+  return d;
 }
 
 export function InviteDialog() {
@@ -33,8 +34,9 @@ export function InviteDialog() {
   async function invite() {
     setBusy(true);
     try {
-      await send("/api/admin/team", "POST", { email, role });
-      toast.success(`Invitation sent to ${email}`);
+      const d = await send("/api/admin/team", "POST", { email, role });
+      if (d.warning) toast.warning(d.warning);
+      else toast.success(`Invitation sent to ${email}`);
       setOpen(false);
       setEmail("");
       router.refresh();

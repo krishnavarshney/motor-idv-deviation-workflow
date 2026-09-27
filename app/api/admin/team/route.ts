@@ -21,14 +21,25 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   // handle_new_user() created the profile as operator; set the chosen role.
-  if (role !== "operator") await admin.from("profiles").update({ role }).eq("id", data.user.id);
+  let roleError: string | null = null;
+  if (role !== "operator") {
+    const { error: updateError } = await admin.from("profiles").update({ role }).eq("id", data.user.id);
+    if (updateError) roleError = updateError.message;
+  }
 
   await supabase.from("audit_events").insert({
     event_type: "team_member_invited",
     actor_type: "user",
     actor_id: user.id,
     severity: "info",
-    payload: { invitedUserId: data.user.id, email, role },
+    payload: { invitedUserId: data.user.id, email, role: roleError ? "operator" : role },
   });
+
+  if (roleError) {
+    return NextResponse.json(
+      { id: data.user.id, warning: "Invited, but the role could not be set — it is operator. Change it from the Team page." },
+      { status: 207 },
+    );
+  }
   return NextResponse.json({ id: data.user.id }, { status: 201 });
 }
