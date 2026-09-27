@@ -4,6 +4,7 @@ import { activeHref, visibleNav } from "../components/nav";
 import { MAX_CASES_PER_JOB, parseJobRequest } from "../lib/jobs";
 import { isWorkerOnline } from "../lib/worker-status";
 import { startOfDayIst } from "../lib/format";
+import { safeRedirectPath } from "../lib/safe-redirect";
 
 function main() {
   // Role matrix (spec section 3)
@@ -52,6 +53,18 @@ function main() {
   // Midnight IST as a UTC instant
   assert.equal(startOfDayIst(new Date("2026-09-27T20:00:00Z")).toISOString(), "2026-09-27T18:30:00.000Z"); // 01:30 IST on the 28th
   assert.equal(startOfDayIst(new Date("2026-09-27T12:00:00Z")).toISOString(), "2026-09-26T18:30:00.000Z"); // 17:30 IST on the 27th
+
+  // safeRedirectPath: same-origin only, backslash/protocol-relative tricks rejected
+  const base = "http://localhost:3000";
+  const fallback = "/account?welcome=1";
+  assert.equal(safeRedirectPath("/account?x=1", base, fallback), "/account?x=1");
+  assert.equal(safeRedirectPath("//evil.com", base, fallback), fallback);
+  assert.equal(safeRedirectPath("/\\evil.com", base, fallback), fallback);
+  assert.equal(safeRedirectPath("\\\\evil.com", base, fallback), fallback);
+  assert.equal(safeRedirectPath("https://evil.com/a", base, fallback), fallback);
+  assert.equal(safeRedirectPath("http://localhost:3000/reviews", base, fallback), "/reviews");
+  assert.equal(safeRedirectPath(null, base, fallback), fallback);
+  assert.equal(safeRedirectPath("javascript:alert(1)", base, fallback), fallback);
 
   console.log("console rules tests passed");
 }
