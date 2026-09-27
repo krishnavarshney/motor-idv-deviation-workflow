@@ -1,4 +1,4 @@
-import type {DecisionConfig} from "@/domain/motor-idv";
+import type {DecisionConfig} from "@/src/domain/motor-idv";
 import type {SupabaseClient} from "@supabase/supabase-js";
 export async function loadDecisionConfig(supabase:SupabaseClient):Promise<DecisionConfig>{
  const {data}=await supabase.from("config_settings").select("setting_key,setting_value").eq("is_active",true);
