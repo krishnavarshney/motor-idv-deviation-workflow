@@ -1,0 +1,33 @@
+# Motor IDV Deviation Workflow - Project Info
+
+## Project IDs and Links
+
+| Resource | Value |
+|---|---|
+| GitHub repository | https://github.com/krishnavarshney/motor-idv-deviation-workflow |
+| GitHub default branch | main |
+| Lovable workspace ID | sX1zSyP1NFkUCMAywqZ0 |
+| Lovable project ID | 3900429a-28a3-47f8-aff8-c2d85c9fe62f |
+| Supabase project ref | oyjirtozeoeeacogldpx |
+| Supabase URL | https://oyjirtozeoeeacogldpx.supabase.co |
+| Supabase region | ap-south-1 |
+| Vercel team ID | team_J17ufC2e2aZBEnILQy9No7V7 |
+| Vercel team slug | krishnavarshneys-projects |
+
+## Important credential rule
+
+Do not store Supabase passwords, service-role keys, OBV credentials, Vercel tokens, or other secrets in this file or GitHub. Use Vercel/Supabase environment variables and secret storage.
+
+A database password was previously exposed during setup and must be rotated before production use.
+
+## Architecture
+
+- Frontend: React/TypeScript application prepared for Vercel.
+- Authentication: Supabase Auth.
+- Database: Supabase PostgreSQL.
+- Authorization: Supabase RLS + profiles.role.
+- Realtime: Supabase Realtime for workflow queues.
+- Source control: GitHub.
+- Deployment: Vercel.
+- External valuation: isolated OBV connector.
+- Decisioning: deterministic, explainable domain engine.
