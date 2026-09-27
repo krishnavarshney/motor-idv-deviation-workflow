@@ -1,4 +1,5 @@
 export type Role = "operator" | "underwriter" | "auditor" | "admin";
+export const ROLES: readonly Role[] = ["operator", "underwriter", "auditor", "admin"];
 export type Action = "view" | "run_jobs" | "review" | "test_lookup" | "manage" | "audit";
 
 const MATRIX: Record<Action, readonly Role[]> = {
