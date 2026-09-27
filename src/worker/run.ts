@@ -12,6 +12,7 @@
 import { loadWorkerConfig, type WorkerConfig } from "./config";
 import { getAdminClient } from "./supabase-admin";
 import { createRun, emptyCounts, evaluateCases, fetchReferrals, finalizeRun, openSession, runReconcile } from "./pipeline";
+import { loadDecisionConfig } from "../server/idv-config";
 
 export async function runWorker(configOverrides?: Partial<WorkerConfig>) {
   const started = Date.now();
@@ -24,10 +25,14 @@ export async function runWorker(configOverrides?: Partial<WorkerConfig>) {
   let failed = false;
   let close: (() => Promise<void>) | undefined;
   try {
-    const opened = await openSession(supabase, config, runId);
-    close = opened.close;
-    const reconcileError = await runReconcile(opened.session);
+    const decisionConfig = await loadDecisionConfig(supabase);
+
+    // Needs no browser, so it runs even when CoreHub/Chrome is unreachable.
+    const reconcileError = await runReconcile(supabase, decisionConfig, { dryRun: config.dryRun, runId });
     if (reconcileError) counts.errors.push(reconcileError);
+
+    const opened = await openSession(supabase, config, runId, decisionConfig);
+    close = opened.close;
 
     const fetched = await fetchReferrals(opened.session);
     counts.casesDiscovered = fetched.discovered;

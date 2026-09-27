@@ -62,8 +62,13 @@ export async function finalizeRun(supabase: SupabaseClient, runId: string, dryRu
   return status as "completed" | "failed" | "dry_run_completed";
 }
 
-export async function openSession(supabase: SupabaseClient, config: WorkerConfig, runId: string) {
-  const decisionConfig = await loadDecisionConfig(supabase);
+export async function openSession(
+  supabase: SupabaseClient,
+  config: WorkerConfig,
+  runId: string,
+  decisionConfig?: DecisionConfig,
+) {
+  const resolvedDecisionConfig = decisionConfig ?? (await loadDecisionConfig(supabase));
   // Prefer the system Chrome, fall back to bundled Chromium.
   const browser = await chromium
     .launch({ channel: "chrome", headless: config.headless })
@@ -74,7 +79,7 @@ export async function openSession(supabase: SupabaseClient, config: WorkerConfig
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     ...(existsSync(config.sessionStoragePath) ? { storageState: config.sessionStoragePath } : {}),
   });
-  const session: Session = { supabase, config, context, decisionConfig, runId };
+  const session: Session = { supabase, config, context, decisionConfig: resolvedDecisionConfig, runId };
   const close = async () => {
     await context.close().catch(() => {});
     await browser.close();
@@ -83,10 +88,14 @@ export async function openSession(supabase: SupabaseClient, config: WorkerConfig
 }
 
 /** Queued reviews re-checked against condition bands. Never throws. */
-export async function runReconcile(s: Session): Promise<string | null> {
+export async function runReconcile(
+  supabase: SupabaseClient,
+  decisionConfig: DecisionConfig,
+  opts: { dryRun: boolean; runId: string },
+): Promise<string | null> {
   try {
-    const r = await reconcileConditionBands(s.supabase, s.decisionConfig, { dryRun: s.config.dryRun, runId: s.runId });
-    console.log(`🔁 Reconciled ${r.checked} queued reviews, ${s.config.dryRun ? "would approve" : "approved"} ${r.approved}`);
+    const r = await reconcileConditionBands(supabase, decisionConfig, opts);
+    console.log(`🔁 Reconciled ${r.checked} queued reviews, ${opts.dryRun ? "would approve" : "approved"} ${r.approved}`);
     return null;
   } catch (err) {
     return `Reconciliation failed: ${err instanceof Error ? err.message : String(err)}`;
