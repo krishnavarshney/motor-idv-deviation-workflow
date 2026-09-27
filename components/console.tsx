@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardAction }
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { NumberTicker } from "@/components/ui/number-ticker";
+import { MagicCard } from "@/components/ui/magic-card";
 import { cn } from "@/lib/utils";
 
 export function PageHeader({
@@ -28,34 +29,36 @@ export function PageHeader({
   );
 }
 
-export function KpiCard({
-  label,
-  value,
-  foot,
-  icon: Icon,
-}: {
-  label: string;
-  value: number | string;
-  foot?: string;
-  icon: LucideIcon;
-}) {
+export function KpiCard({ label, value, foot, icon: Icon }: { label: string; value: number | string; foot?: string; icon: LucideIcon }) {
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardDescription>{label}</CardDescription>
-        <CardAction>
-          <Icon className="size-4 text-muted-foreground" />
-        </CardAction>
-        <CardTitle className="text-2xl font-semibold tracking-tight tabular-nums">
-          {typeof value === "number" ? (value === 0 ? "0" : <NumberTicker value={value} />) : value}
-        </CardTitle>
-      </CardHeader>
-      {foot && <CardContent className="text-xs text-muted-foreground">{foot}</CardContent>}
-    </Card>
+    <MagicCard className="rounded-xl">
+      <Card size="sm" className="bg-transparent ring-0">
+        <CardHeader>
+          <CardDescription>{label}</CardDescription>
+          <CardAction>
+            <Icon className="size-4 text-muted-foreground" />
+          </CardAction>
+          <CardTitle className="text-2xl font-semibold tracking-tight tabular-nums">
+            {typeof value === "number" ? value === 0 ? "0" : <NumberTicker value={value} /> : value}
+          </CardTitle>
+        </CardHeader>
+        {foot && <CardContent className="text-xs text-muted-foreground">{foot}</CardContent>}
+      </Card>
+    </MagicCard>
   );
 }
 
-export function EmptyRow({ colSpan, icon: Icon, title, description }: { colSpan: number; icon: LucideIcon; title: string; description?: string }) {
+export function EmptyRow({
+  colSpan,
+  icon: Icon,
+  title,
+  description,
+}: {
+  colSpan: number;
+  icon: LucideIcon;
+  title: string;
+  description?: string;
+}) {
   return (
     <TableRow className="hover:bg-transparent">
       <TableCell colSpan={colSpan}>
