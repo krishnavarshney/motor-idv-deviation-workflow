@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { AlertTriangle, Bot, CheckCircle2, History, Server } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, FlaskConical, History, Server } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyRow, KpiCard, PageHeader } from "@/components/console";
@@ -8,11 +9,9 @@ import { DecisionBadge } from "@/components/status";
 import { CancelJobButton, FetchButton } from "@/components/job-buttons";
 import { JobProgress } from "@/components/job-progress";
 import { LiveRefresh } from "@/components/live-refresh";
-import { TestLookupSheet } from "@/components/test-lookup-sheet";
 import { getSessionProfile } from "@/lib/api-auth";
 import { can } from "@/lib/authz";
 import { getWorkerStatus } from "@/lib/worker-status";
-import { loadDecisionConfig } from "@/src/server/idv-config";
 import { dateTime } from "@/lib/format";
 
 export const metadata = { title: "Automation runs" };
@@ -45,16 +44,6 @@ export default async function Runs() {
   const fetchReason = !worker.online ? "Worker offline" : active.some((j) => j.type === "fetch") ? "Fetch already in progress" : null;
 
   const canTest = can(profile?.role, "test_lookup");
-  const [decisionConfig, { data: recentCases }] = canTest
-    ? await Promise.all([
-        loadDecisionConfig(supabase),
-        supabase
-          .from("referral_cases")
-          .select("id, external_case_id, make_raw, model_raw, variant_raw, requested_idv, referral_status, metadata")
-          .order("created_at", { ascending: false })
-          .limit(8),
-      ])
-    : [null, { data: null }];
 
   return (
     <>
@@ -65,7 +54,14 @@ export default async function Runs() {
         description="Every CoreHub fetch and evaluation, whether started here or by a schedule."
         actions={
           <>
-            {canTest && decisionConfig && <TestLookupSheet decisionConfig={decisionConfig} recentCases={recentCases ?? []} />}
+            {canTest && (
+              <Button variant="outline" asChild>
+                <Link href="/simulate">
+                  <FlaskConical data-icon="inline-start" />
+                  Test lookup
+                </Link>
+              </Button>
+            )}
             {canRun && <FetchButton disabledReason={fetchReason} />}
           </>
         }
