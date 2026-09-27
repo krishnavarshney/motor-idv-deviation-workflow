@@ -144,6 +144,9 @@ AUTOMATION_DRY_RUN=true|false (default: true)
 PLAYWRIGHT_HEADLESS=true|false (default: true)
 ```
 
+On the console (Vercel), `AUTOMATION_DRY_RUN` decides dry-run for jobs started
+from the UI; on the daemon host it only affects `npm run worker` CLI runs.
+
 Never commit passwords, service-role keys, session cookies, browser state, customer PII or production screenshots.
 
 ## Scheduling
