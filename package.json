@@ -1,30 +1,6 @@
 {
-  "name": "motor-idv-deviation-workflow",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "preview": "vite preview",
-    "lint": "eslint ."
-  },
-  "dependencies": {
-    "@supabase/ssr": "^0.7.0",
-    "@supabase/supabase-js": "^2.57.0",
-    "@tailwindcss/vite": "^4.2.1",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "lucide-react": "^0.575.0",
-    "tailwindcss": "^4.2.1",
-    "tw-animate-css": "^1.3.4",
-    "cookie": "^1.0.2"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.2.0",
-    "typescript": "^5.8.3",
-    "vite": "8.1.5",
-    "vite-tsconfig-paths": "^6.0.2"
-  }
+  "name":"motor-idv-deviation-workflow","version":"0.1.0","private":true,
+  "scripts":{"dev":"next dev","build":"next build","start":"next start","lint":"next lint","test":"node --experimental-strip-types tests/decision-engine.test.ts && node --experimental-strip-types tests/vehicle-resolution.test.ts && node --experimental-strip-types tests/workflow.test.ts"},
+  "dependencies":{"@supabase/ssr":"^0.7.0","@supabase/supabase-js":"^2.57.0","lucide-react":"^0.575.0","next":"^16.0.0","react":"^19.2.0","react-dom":"^19.2.0"},
+  "devDependencies":{"@types/node":"^22.0.0","@types/react":"^19.2.0","@types/react-dom":"^19.2.0","typescript":"^5.8.3"}
 }
