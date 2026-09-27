@@ -17,43 +17,14 @@ try {
 
 
 export interface CorehubSelectors {
-  /** Selector for the referral table rows */
+  /** Selector for the referral listing rows (cells are mapped by header text) */
   tableRow: string;
-  /** Selector for the case-ID cell within a row */
-  caseId: string;
-  /** Selector for registration number */
-  registration: string;
-  /** Selector for make */
-  make: string;
-  /** Selector for model */
-  model: string;
-  /** Selector for variant */
-  variant: string;
-  /** Selector for fuel type */
-  fuel: string;
-  /** Selector for CC */
-  cc: string;
-  /** Selector for requested IDV */
-  requestedIdv: string;
   /** Selector for the login username field */
   loginUsername: string;
   /** Selector for the login password field */
   loginPassword: string;
   /** Selector for the login submit button */
   loginSubmit: string;
-}
-
-export interface ObvSelectors {
-  /** Selector for the make/brand input or dropdown */
-  makeInput: string;
-  /** Selector for the model input or dropdown */
-  modelInput: string;
-  /** Selector for the variant input or dropdown */
-  variantInput: string;
-  /** Selector for the search/submit button */
-  searchButton: string;
-  /** Selector for the displayed IDV value */
-  idvValue: string;
 }
 
 export interface WorkerConfig {
@@ -66,7 +37,6 @@ export interface WorkerConfig {
 
   // OBV
   obvSearchUrl: string;
-  obvSelectors: ObvSelectors;
 
   // Supabase (service role — bypasses RLS)
   supabaseUrl: string;
@@ -83,30 +53,13 @@ export interface WorkerConfig {
 
   // Timeouts
   navigationTimeoutMs: number;
-  obvLookupTimeoutMs: number;
 }
 
 const DEFAULT_COREHUB_SELECTORS: CorehubSelectors = {
-  tableRow: "table.referrals tbody tr",
-  caseId: "td:nth-child(1)",
-  registration: "td:nth-child(2)",
-  make: "td:nth-child(3)",
-  model: "td:nth-child(4)",
-  variant: "td:nth-child(5)",
-  fuel: "td:nth-child(6)",
-  cc: "td:nth-child(7)",
-  requestedIdv: "td:nth-child(8)",
+  tableRow: "table tbody tr",
   loginUsername: 'input[name="username"], input[type="email"]',
   loginPassword: 'input[name="password"], input[type="password"]',
   loginSubmit: 'button[type="submit"]',
-};
-
-const DEFAULT_OBV_SELECTORS: ObvSelectors = {
-  makeInput: "select[name='make'], #brand, #make",
-  modelInput: "select[name='model'], #model",
-  variantInput: "select[name='trim'], select[name='variant'], #variant",
-  searchButton: "button#check_price_used, button[type='submit'], .search-btn",
-  idvValue: ".mainPrice, .price.price-scroll, .price-value, .idv-value, .valuation-price",
 };
 
 function requireEnv(key: string): string {
@@ -150,15 +103,13 @@ export function loadWorkerConfig(
       overrides?.corehubPassword || process.env.COREHUB_PASSWORD || "",
     corehubSelectors:
       overrides?.corehubSelectors ??
-      parseJsonEnv("COREHUB_SELECTORS_JSON", DEFAULT_COREHUB_SELECTORS),
+      // Merge so a partial override keeps the other defaults.
+      { ...DEFAULT_COREHUB_SELECTORS, ...parseJsonEnv("COREHUB_SELECTORS_JSON", {}) },
 
     obvSearchUrl:
       overrides?.obvSearchUrl ||
       process.env.OBV_SEARCH_URL ||
       "https://www.orangebookvalue.com",
-    obvSelectors:
-      overrides?.obvSelectors ??
-      parseJsonEnv("OBV_SELECTORS_JSON", DEFAULT_OBV_SELECTORS),
 
     supabaseUrl:
       overrides?.supabaseUrl ||
@@ -187,9 +138,6 @@ export function loadWorkerConfig(
     navigationTimeoutMs:
       overrides?.navigationTimeoutMs ??
       Number(process.env.NAVIGATION_TIMEOUT_MS || 30000),
-    obvLookupTimeoutMs:
-      overrides?.obvLookupTimeoutMs ??
-      Number(process.env.OBV_LOOKUP_TIMEOUT_MS || 15000),
 
     sessionStoragePath:
       overrides?.sessionStoragePath ||

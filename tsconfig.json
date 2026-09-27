@@ -39,7 +39,6 @@
     "src/server/**/*.ts",
     "src/workflow/**/*.ts",
     "src/connectors/**/*.ts",
-    "src/lib/supabase/**/*.ts",
     "src/worker/**/*.ts",
     "proxy.ts",
     ".next/dev/types/**/*.ts"

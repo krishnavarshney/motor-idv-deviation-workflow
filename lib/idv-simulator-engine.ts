@@ -9,7 +9,8 @@
  */
 
 import type { ConditionRange } from "@/components/condition-spectrum";
-import type { DecisionConfig } from "@/src/domain/motor-idv";
+import type { ConditionTierKey, DecisionConfig, DecisionReasonCode } from "@/src/domain/motor-idv";
+import { evaluateIdvDecision } from "@/src/domain/decision-engine";
 
 export interface VehicleCatalogEntry {
   make: string;
@@ -330,15 +331,10 @@ export interface DecisionAllowanceAnalysis {
   minAllowedIdv: number;
   maxAllowedIdv: number;
   isAllowed: boolean;
-  activeRule:
-    | "EXACT_MATCH"
-    | "WITHIN_ABSOLUTE_TOLERANCE"
-    | "WITHIN_PERCENTAGE_TOLERANCE"
-    | "WITHIN_CONDITION_BAND"
-    | "TOLERANCE_EXCEEDED";
+  activeRule: DecisionReasonCode;
   verdict: "auto_approved" | "manual_review";
   tierAlignment: "Good" | "Very Good" | "Excellent" | "Below Market Floor" | "Above Market Ceiling";
-  pickedCondition: "good" | "very_good" | "excellent" | null;
+  pickedCondition: ConditionTierKey | null;
   pickedConditionLabel: string | null;
   pickedConditionRange: { min: number; max: number; midpoint?: number } | null;
   recommendation: string;
@@ -347,19 +343,23 @@ export interface DecisionAllowanceAnalysis {
 }
 
 /**
- * Intelligent Underwriter Decisioning: determines which IDVs will be allowed
- * and evaluates whether the current requested IDV qualifies for instant STP auto-approval.
- * Policy:
- * 1. If requested IDV falls inside Good, Very Good, or Excellent condition bands -> AUTO APPROVED.
- * 2. If requested IDV falls within configured absolute or percentage tolerance of benchmark -> AUTO APPROVED.
- * 3. Outside both -> MANUAL REVIEW.
+ * Simulator view of an underwriting decision. The approve/review outcome and reason code
+ * come from the production rules in `evaluateIdvDecision`; everything else here
+ * (corridor, tier alignment, recommendation copy) is descriptive, for display only.
  */
 export function analyzeDecisionAllowance(
   requestedIdv: number,
   benchmarkIdv: number,
+  vehicleConfidence: number,
   config: DecisionConfig,
   conditions?: SimulatedConditionSpectrum
 ): DecisionAllowanceAnalysis {
+  const result = evaluateIdvDecision(
+    { requestedIdv, fetchedIdv: benchmarkIdv, vehicleConfidence, providerStatus: "succeeded", conditions },
+    config
+  );
+  const isAllowed = result.decision === "auto_approved";
+
   const absDelta = Math.abs(requestedIdv - benchmarkIdv);
   const pctDelta = benchmarkIdv > 0 ? (absDelta / benchmarkIdv) * 100 : 0;
 
@@ -367,90 +367,51 @@ export function analyzeDecisionAllowance(
   const pctTolRupees = Math.round(benchmarkIdv * (config.percentageTolerance / 100));
   const effectiveToleranceInr = Math.max(config.absoluteTolerance, pctTolRupees);
 
-  // Auto-approval corridor spans the entire Good -> Excellent spectrum PLUS policy tolerance
+  // Descriptive corridor: the Good -> Excellent spectrum PLUS policy tolerance
   const conditionFloor = conditions ? conditions.good.min : benchmarkIdv - effectiveToleranceInr;
   const conditionCeiling = conditions ? conditions.excellent.max : benchmarkIdv + effectiveToleranceInr;
 
   const minAllowedIdv = Math.min(conditionFloor, Math.max(0, benchmarkIdv - effectiveToleranceInr));
   const maxAllowedIdv = Math.max(conditionCeiling, benchmarkIdv + effectiveToleranceInr);
 
-  // Tier alignment & Picked Condition detection
-  let tierAlignment: DecisionAllowanceAnalysis["tierAlignment"] = "Very Good";
-  let pickedCondition: "good" | "very_good" | "excellent" | null = null;
-  let pickedConditionLabel: string | null = null;
-  let pickedConditionRange: { min: number; max: number; midpoint?: number } | null = null;
-  let isInsideConditionBand = false;
+  const tiers = conditions
+    ? ([
+        ["very_good", "Very Good", conditions.veryGood],
+        ["good", "Good", conditions.good],
+        ["excellent", "Excellent", conditions.excellent],
+      ] as const)
+    : [];
+  const picked = tiers.find(([, , r]) => requestedIdv >= r.min && requestedIdv <= r.max);
+  const tierAlignment: DecisionAllowanceAnalysis["tierAlignment"] = picked
+    ? picked[1]
+    : !conditions
+      ? "Very Good"
+      : requestedIdv < conditions.good.min
+        ? "Below Market Floor"
+        : "Above Market Ceiling";
 
-  if (conditions) {
-    if (requestedIdv >= conditions.veryGood.min && requestedIdv <= conditions.veryGood.max) {
-      tierAlignment = "Very Good";
-      pickedCondition = "very_good";
-      pickedConditionLabel = "Very Good Condition";
-      pickedConditionRange = conditions.veryGood;
-      isInsideConditionBand = true;
-    } else if (requestedIdv >= conditions.good.min && requestedIdv <= conditions.good.max) {
-      tierAlignment = "Good";
-      pickedCondition = "good";
-      pickedConditionLabel = "Good Condition";
-      pickedConditionRange = conditions.good;
-      isInsideConditionBand = true;
-    } else if (requestedIdv >= conditions.excellent.min && requestedIdv <= conditions.excellent.max) {
-      tierAlignment = "Excellent";
-      pickedCondition = "excellent";
-      pickedConditionLabel = "Excellent Condition";
-      pickedConditionRange = conditions.excellent;
-      isInsideConditionBand = true;
-    } else if (requestedIdv < conditions.good.min) {
-      tierAlignment = "Below Market Floor";
-    } else {
-      tierAlignment = "Above Market Ceiling";
-    }
-  }
-
-  let isAllowed = false;
-  let activeRule: DecisionAllowanceAnalysis["activeRule"] = "TOLERANCE_EXCEEDED";
-
-  // Rule 1: Within any condition tier (Good, Very Good, or Excellent) -> Auto Approved
-  if (isInsideConditionBand) {
-    isAllowed = true;
-    activeRule = "WITHIN_CONDITION_BAND";
-  } else if (absDelta === 0) {
-    isAllowed = true;
-    activeRule = "EXACT_MATCH";
-  } else if (absDelta <= config.absoluteTolerance) {
-    isAllowed = true;
-    activeRule = "WITHIN_ABSOLUTE_TOLERANCE";
-  } else if (pctDelta <= config.percentageTolerance) {
-    isAllowed = true;
-    activeRule = "WITHIN_PERCENTAGE_TOLERANCE";
-  }
-
-  const verdict = isAllowed ? "auto_approved" : "manual_review";
-
-  // Adjustment needed if outside auto-approval window
   let adjustmentRupeesNeeded = 0;
   if (!isAllowed) {
-    if (requestedIdv > maxAllowedIdv) {
-      adjustmentRupeesNeeded = requestedIdv - maxAllowedIdv;
-    } else if (requestedIdv < minAllowedIdv) {
-      adjustmentRupeesNeeded = minAllowedIdv - requestedIdv;
-    }
+    if (requestedIdv > maxAllowedIdv) adjustmentRupeesNeeded = requestedIdv - maxAllowedIdv;
+    else if (requestedIdv < minAllowedIdv) adjustmentRupeesNeeded = minAllowedIdv - requestedIdv;
   }
 
-  let recommendation = "";
+  const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
+  let recommendation: string;
   if (isAllowed) {
-    if (activeRule === "WITHIN_CONDITION_BAND") {
-      recommendation = `Requested IDV of ₹${requestedIdv.toLocaleString("en-IN")} lies directly within the ${tierAlignment} Condition market valuation band. Eligible for 100% straight-through processing (STP) auto-approval under market condition spectrum policy.`;
-    } else {
-      recommendation = `Requested IDV of ₹${requestedIdv.toLocaleString("en-IN")} is within allowable underwriting bounds (±₹${effectiveToleranceInr.toLocaleString("en-IN")} / ${config.percentageTolerance}%). Eligible for 100% straight-through processing (STP) auto-approval.`;
-    }
+    recommendation =
+      result.reasonCode === "WITHIN_CONDITION_BAND"
+        ? `Requested IDV of ${inr(requestedIdv)} lies directly within the ${tierAlignment} Condition market valuation band. Eligible for straight-through processing (STP) auto-approval under market condition spectrum policy.`
+        : `Requested IDV of ${inr(requestedIdv)} is within allowable underwriting bounds (±${inr(effectiveToleranceInr)} / ${config.percentageTolerance}%). Eligible for straight-through processing (STP) auto-approval.`;
+  } else if (result.reasonCode !== "TOLERANCE_EXCEEDED") {
+    recommendation = `${result.explanation} Manual underwriter review required.`;
   } else if (requestedIdv > maxAllowedIdv) {
-    recommendation = `Requested IDV is ₹${adjustmentRupeesNeeded.toLocaleString("en-IN")} above the auto-approval ceiling (₹${maxAllowedIdv.toLocaleString("en-IN")}). Exceeds the Excellent condition band. Manual Underwriter review required, or adjust IDV down to ₹${maxAllowedIdv.toLocaleString("en-IN")} to auto-approve.`;
+    recommendation = `Requested IDV is ${inr(adjustmentRupeesNeeded)} above the auto-approval ceiling (${inr(maxAllowedIdv)}). Exceeds the Excellent condition band. Manual underwriter review required, or adjust IDV down to ${inr(maxAllowedIdv)} to auto-approve.`;
+  } else if (requestedIdv < minAllowedIdv) {
+    recommendation = `Requested IDV is ${inr(adjustmentRupeesNeeded)} below the auto-approval floor (${inr(minAllowedIdv)}). Below the Good condition band. Risk of under-insurance. Manual underwriter review required, or adjust IDV up to ${inr(minAllowedIdv)} to auto-approve.`;
   } else {
-    recommendation = `Requested IDV is ₹${adjustmentRupeesNeeded.toLocaleString("en-IN")} below the auto-approval floor (₹${minAllowedIdv.toLocaleString("en-IN")}). Below the Good condition band. Risk of under-insurance. Manual Underwriter review required, or adjust IDV up to ₹${minAllowedIdv.toLocaleString("en-IN")} to auto-approve.`;
+    recommendation = `${result.explanation} Requested IDV falls between condition bands and outside tolerance. Manual underwriter review required.`;
   }
-
-  const allowedCorridorSummary = `Allowed Auto-Approval Window: ₹${minAllowedIdv.toLocaleString("en-IN")} to ₹${maxAllowedIdv.toLocaleString("en-IN")} (Good to Excellent Bands + Tolerance Buffer)`;
 
   return {
     requestedIdv,
@@ -463,14 +424,14 @@ export function analyzeDecisionAllowance(
     minAllowedIdv,
     maxAllowedIdv,
     isAllowed,
-    activeRule,
-    verdict,
+    activeRule: result.reasonCode,
+    verdict: isAllowed ? "auto_approved" : "manual_review",
     tierAlignment,
-    pickedCondition,
-    pickedConditionLabel,
-    pickedConditionRange,
+    pickedCondition: picked?.[0] ?? null,
+    pickedConditionLabel: picked ? `${picked[1]} Condition` : null,
+    pickedConditionRange: picked?.[2] ?? null,
     recommendation,
     adjustmentRupeesNeeded,
-    allowedCorridorSummary,
+    allowedCorridorSummary: `Allowed Auto-Approval Window: ${inr(minAllowedIdv)} to ${inr(maxAllowedIdv)} (Good to Excellent Bands + Tolerance Buffer)`,
   };
 }

@@ -32,6 +32,7 @@ assert.ok(spectrum2022.veryGood.max < spectrum2022.excellent.max, "Very Good max
 const analysisWithin = analyzeDecisionAllowance(
   spectrum2022.benchmarkIdv + 5000,
   spectrum2022.benchmarkIdv,
+  0.95,
   TEST_CONFIG,
   spectrum2022
 );
@@ -44,6 +45,7 @@ assert.ok(analysisWithin.maxAllowedIdv > analysisWithin.benchmarkIdv, "Ceiling m
 const analysisExceeded = analyzeDecisionAllowance(
   analysisWithin.maxAllowedIdv + 25000,
   spectrum2022.benchmarkIdv,
+  0.95,
   TEST_CONFIG,
   spectrum2022
 );
@@ -62,6 +64,7 @@ for (const p of COREHUB_BENCHMARK_PRESETS) {
 const goodBandAnalysis = analyzeDecisionAllowance(
   spectrum2022.good.midpoint,
   spectrum2022.benchmarkIdv,
+  0.95,
   TEST_CONFIG,
   spectrum2022
 );
@@ -72,11 +75,27 @@ assert.equal(goodBandAnalysis.pickedCondition, "good");
 const excellentBandAnalysis = analyzeDecisionAllowance(
   spectrum2022.excellent.midpoint,
   spectrum2022.benchmarkIdv,
+  0.95,
   TEST_CONFIG,
   spectrum2022
 );
 assert.equal(excellentBandAnalysis.verdict, "auto_approved");
 assert.equal(excellentBandAnalysis.activeRule, "WITHIN_CONDITION_BAND");
 assert.equal(excellentBandAnalysis.pickedCondition, "excellent");
+
+// Test 6: Outcome comes from the production decision engine (confidence threshold + reason codes)
+const lowConfidence = analyzeDecisionAllowance(
+  spectrum2022.veryGood.midpoint,
+  spectrum2022.benchmarkIdv,
+  0.5,
+  TEST_CONFIG,
+  spectrum2022
+);
+assert.equal(lowConfidence.verdict, "manual_review", "Low vehicle confidence must route to review");
+assert.equal(lowConfidence.activeRule, "LOW_VEHICLE_CONFIDENCE");
+assert.equal(lowConfidence.pickedCondition, "very_good", "Tier alignment stays descriptive");
+
+const exact = analyzeDecisionAllowance(700000, 700000, 0.95, TEST_CONFIG);
+assert.equal(exact.activeRule, "EXACT_IDV_MATCH");
 
 console.log("simulator tests passed");

@@ -13,11 +13,12 @@ import { chromium } from "playwright";
 import { existsSync } from "fs";
 import { loadWorkerConfig, type WorkerConfig } from "./config";
 import { getAdminClient } from "./supabase-admin";
-import { scrapeCorehub, type CorehubReferral } from "./corehub-scraper";
-import { lookupObvBrowser, type ObvBrowserResult } from "./obv-lookup";
+import { openReferral, scrapeCorehub, type CorehubReferral } from "./corehub-scraper";
+import { lookupObv, type ObvBrowserResult } from "./obv-lookup";
 import { captureEvidence, type EvidenceArtifact } from "./evidence";
 import { evaluateIdvDecision } from "../domain/decision-engine";
 import { loadDecisionConfig } from "../server/idv-config";
+import { reconcileConditionBands } from "./reconcile";
 import type { DecisionConfig } from "../domain/motor-idv";
 
 interface RunSummary {
@@ -123,6 +124,9 @@ async function persistCase(
       metadata: {
         dry_run: workerConfig.dryRun,
         raw_values: referral.rawValues,
+        yom: referral.yom,
+        quote_id: referral.quoteId,
+        vehicle_details: referral.vehicleDetails,
         obv_source_url: obvResult.sourceUrl,
         obv_reason_code: obvResult.reasonCode,
       },
@@ -174,7 +178,7 @@ async function persistCase(
     .insert({
       case_id: caseRow.id,
       vehicle_resolution_id: resolution?.id ?? null,
-      provider: "obv-browser",
+      provider: "obv-http",
       provider_status: providerStatus,
       fetched_idv: obvResult.idv,
       fetched_currency: "INR",
@@ -185,6 +189,8 @@ async function persistCase(
         model: referral.model,
         variant: referral.variant,
         source_url: workerConfig.obvSearchUrl ?? null,
+        // Exact OBV names the raw CoreHub values resolved to (absent when a field had no match).
+        resolved: (obvResult.raw as { resolved?: unknown } | undefined)?.resolved ?? null,
       },
       raw_response: {
         idv: obvResult.idv,
@@ -282,6 +288,18 @@ export async function runWorker(
   let casesNew = 0;
   let casesProcessed = 0;
   let casesErrored = 0;
+
+  // ── Step 0: Reconcile queued reviews against condition bands ────
+  // Needs no browser, so it runs even when CoreHub is unreachable.
+  console.log("\n🔁 Phase 0: Reconciling queued reviews against condition bands...");
+  try {
+    const r = await reconcileConditionBands(supabase, decisionConfig, { dryRun: config.dryRun, runId });
+    console.log(`   Checked ${r.checked}, ${config.dryRun ? "would approve" : "approved"} ${r.approved}`);
+  } catch (err) {
+    const errMsg = `Reconciliation failed: ${err}`;
+    console.error(`   ❌ ${errMsg}`);
+    errors.push(errMsg);
+  }
 
   // Launch browser (uses local Google Chrome if available, or playwright chromium)
   const browser = await chromium
@@ -398,18 +416,16 @@ export async function runWorker(
     }
 
     // ── Step 3: Process each new case ──────────────────────────────
-    const obvPage = await context.newPage();
-
-    for (const referral of newReferrals) {
-      console.log(`\n🔄 Processing: ${referral.externalCaseId}`);
-      console.log(
-        `   Vehicle: ${referral.make} ${referral.model} ${referral.variant}`
-      );
-      console.log(
-        `   Requested IDV: ₹${referral.requestedIdv?.toLocaleString("en-IN") ?? "N/A"}`
-      );
+    for (const listed of newReferrals) {
+      console.log(`\n🔄 Processing: ${listed.externalCaseId}`);
+      let referral = listed;
 
       try {
+        // Vehicle + requested IDV come from the quote the review page loads
+        referral = await openReferral(corehubPage, config, listed);
+        console.log(`   Vehicle: ${referral.make} ${referral.model} ${referral.variant} ${referral.fuelType ?? ""} (${referral.yom ?? "YOM ?"})`);
+        console.log(`   Requested IDV: ₹${referral.requestedIdv?.toLocaleString("en-IN") ?? "N/A"}`);
+
         // OBV lookup
         let obvResult: ObvBrowserResult;
 
@@ -418,16 +434,13 @@ export async function runWorker(
           referral.model &&
           referral.variant
         ) {
-          obvResult = await lookupObvBrowser(
-            obvPage,
-            {
-              make: referral.make,
-              model: referral.model,
-              variant: referral.variant,
-            },
-            config,
-            runId
-          );
+          obvResult = await lookupObv({
+            make: referral.make,
+            model: referral.model,
+            variant: referral.variant,
+            year: referral.yom ?? undefined,
+            fuel: referral.fuelType,
+          });
         } else {
           // Missing vehicle details — cannot lookup
           obvResult = {
@@ -458,6 +471,7 @@ export async function runWorker(
             fetchedIdv: obvResult.idv,
             vehicleConfidence: 0.9,
             providerStatus,
+            conditions: obvResult.conditions,
           },
           decisionConfig
         );
@@ -499,7 +513,6 @@ export async function runWorker(
       }
     }
 
-    await obvPage.close();
     await corehubPage.close();
     await context.close();
   } finally {

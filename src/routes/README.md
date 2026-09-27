@@ -1,1 +1,0 @@
-Application routes are implemented with TanStack Router. Authentication is handled through Supabase Auth; protected workflow routes should verify the current user before rendering operational data.\n
