@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
-import { toast } from "sonner";
+import { notify } from "@/lib/notify";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
@@ -23,7 +23,7 @@ import {
 
 type Decision = "auto_approved" | "rejected";
 
-export default function ReviewActions({ reviewId, completed }: { reviewId: string; completed?: boolean }) {
+export default function ReviewActions({ reviewId, caseId, completed }: { reviewId: string; caseId?: string; completed?: boolean }) {
   const router = useRouter();
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState<Decision | null>(null);
@@ -39,8 +39,11 @@ export default function ReviewActions({ reviewId, completed }: { reviewId: strin
     });
     const d = await r.json().catch(() => ({}));
     setBusy(null);
-    if (!r.ok) return toast.error(d.error || "Unable to complete review");
-    toast.success(decision === "rejected" ? "Case rejected" : "Case approved");
+    if (!r.ok) return notify.error("Unable to complete review", { description: d.error });
+    notify.success(decision === "rejected" ? "Case rejected" : "Case approved", {
+      description: "Decision recorded in the audit trail.",
+      href: caseId ? "/referrals/" + caseId : undefined,
+    });
     router.push("/reviews");
     router.refresh();
   }

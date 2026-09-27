@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { notify } from "@/lib/notify";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -30,8 +30,8 @@ export function SettingsForm({ initial }: { initial: Record<string, number> }) {
     const r = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(v) });
     const d = await r.json().catch(() => ({}));
     setSaving(false);
-    if (!r.ok) return toast.error(d.error || "Unable to save");
-    toast.success("Configuration saved", { description: "Change recorded in the audit trail." });
+    if (!r.ok) return notify.error("Unable to save configuration", { description: d.error });
+    notify.success("Configuration saved", { description: "Change recorded in the audit trail.", href: "/settings" });
     router.refresh();
   }
 

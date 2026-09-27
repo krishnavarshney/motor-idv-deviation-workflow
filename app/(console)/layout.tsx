@@ -6,6 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { AppSidebar } from "@/components/app-sidebar";
 import { CommandMenu } from "@/components/command-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationCenter, Toaster } from "@/components/notification-center";
 
 export default async function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -24,11 +25,13 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
           <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
           <CommandMenu />
           <div className="ml-auto flex items-center gap-1">
+            <NotificationCenter />
             <ThemeToggle />
           </div>
         </header>
         <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-4 md:p-6">{children}</div>
       </SidebarInset>
+      <Toaster />
     </SidebarProvider>
   );
 }
