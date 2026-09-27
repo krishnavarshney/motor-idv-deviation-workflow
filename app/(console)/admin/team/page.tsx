@@ -1,3 +1,5 @@
+import { TriangleAlert } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/console";
 import { InviteDialog, TeamTable, type Member } from "@/components/team-table";
@@ -10,7 +12,7 @@ export const metadata = { title: "Team" };
 export default async function Team() {
   const { user } = await requirePageAction("manage");
   const admin = createAdminClient();
-  const [{ data: users }, { data: profiles }] = await Promise.all([
+  const [{ data: users, error: usersError }, { data: profiles }] = await Promise.all([
     admin.auth.admin.listUsers({ perPage: 200 }),
     admin.from("profiles").select("id,full_name,role,is_active"),
   ]);
@@ -32,6 +34,13 @@ export default async function Team() {
   return (
     <>
       <PageHeader eyebrow="Admin" title="Team" description="Who can use the console and what they can do." />
+      {usersError && (
+        <Alert variant="destructive">
+          <TriangleAlert />
+          <AlertTitle>Could not load users</AlertTitle>
+          <AlertDescription>{usersError.message}</AlertDescription>
+        </Alert>
+      )}
       <Card className="pb-0">
         <CardHeader>
           <CardTitle>{members.length} members</CardTitle>
