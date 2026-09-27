@@ -1,0 +1,2 @@
+import {supabase} from "@/integrations/supabase/client";
+export function subscribeToWorkflow(onChange:()=>void){const channel=supabase.channel("workflow-changes").on("postgres_changes",{event:"*",schema:"public",table:"referral_cases"},onChange).on("postgres_changes",{event:"*",schema:"public",table:"manual_reviews"},onChange).subscribe();return()=>{void supabase.removeChannel(channel)}}
