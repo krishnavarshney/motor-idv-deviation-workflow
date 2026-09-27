@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { FlaskConical, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
@@ -6,6 +7,8 @@ import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/comp
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { CaseTable } from "@/components/case-table";
 import { PageHeader } from "@/components/console";
+import { SectionLoaded, SectionProgress } from "@/components/section-progress";
+import { TableSkeleton } from "@/components/skeletons";
 
 export const metadata = { title: "Referral queue" };
 
@@ -17,13 +20,6 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
   // Strip PostgREST filter syntax so user input can't alter the .or() expression.
   const q = (p.q ?? "").replace(/[,()%*\\]/g, " ").trim();
 
-  const supabase = await createClient();
-  let query = supabase.from("referral_cases").select("*").order("received_at", { ascending: false }).limit(100);
-  if (status) query = query.eq("referral_status", status);
-  if (q) query = query.or(["external_case_id", "registration_number", "make_raw", "model_raw"].map((c) => `${c}.ilike.%${q}%`).join(","));
-  const { data } = await query;
-  const rows = data ?? [];
-
   const href = (s?: string) => {
     const sp = new URLSearchParams();
     if (q) sp.set("q", q);
@@ -33,7 +29,7 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
   };
 
   return (
-    <>
+    <SectionProgress total={1}>
       <PageHeader
         eyebrow="Operations"
         title="Referral queue"
@@ -69,20 +65,37 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
         </nav>
       </div>
 
-      <Card className="pb-0">
-        <CardHeader>
-          <CardTitle>{rows.length} cases</CardTitle>
-          <CardDescription>{rows.length === 100 ? "Showing newest 100 — refine the search to narrow" : "Newest first"}</CardDescription>
-          {(q || status) && (
-            <CardAction>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/referrals">Clear filters</Link>
-              </Button>
-            </CardAction>
-          )}
-        </CardHeader>
-        <CaseTable rows={rows} emptyText="No cases match these filters." />
-      </Card>
-    </>
+      {/* key: remount on filter change so the skeleton shows instead of stale rows */}
+      <Suspense key={`${status}|${q}`} fallback={<TableSkeleton cols={["w-28", "w-40", "w-20", "w-24"]} />}>
+        <Results status={status} q={q} />
+      </Suspense>
+    </SectionProgress>
+  );
+}
+
+async function Results({ status, q }: { status?: (typeof STATUSES)[number]; q: string }) {
+  const supabase = await createClient();
+  let query = supabase.from("referral_cases").select("*").order("received_at", { ascending: false }).limit(100);
+  if (status) query = query.eq("referral_status", status);
+  if (q) query = query.or(["external_case_id", "registration_number", "make_raw", "model_raw"].map((c) => `${c}.ilike.%${q}%`).join(","));
+  const { data } = await query;
+  const rows = data ?? [];
+
+  return (
+    <Card className="pb-0">
+      <SectionLoaded />
+      <CardHeader>
+        <CardTitle>{rows.length} cases</CardTitle>
+        <CardDescription>{rows.length === 100 ? "Showing newest 100 — refine the search to narrow" : "Newest first"}</CardDescription>
+        {(q || status) && (
+          <CardAction>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/referrals">Clear filters</Link>
+            </Button>
+          </CardAction>
+        )}
+      </CardHeader>
+      <CaseTable rows={rows} emptyText="No cases match these filters." />
+    </Card>
   );
 }
