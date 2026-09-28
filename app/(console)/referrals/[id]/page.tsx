@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft, ExternalLink, History } from "lucide-react";
+import { AuditTimeline } from "@/components/audit-timeline";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -175,23 +176,7 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ol className="flex flex-col gap-4 border-l pl-4">
-                {(events ?? []).map((e) => (
-                  <li key={e.id} className="relative">
-                    <span
-                      className={cn(
-                        "absolute top-1.5 -left-[21px] size-2.5 rounded-full ring-4 ring-card",
-                        e.severity === "error" ? "bg-destructive" : e.severity === "warning" ? "bg-warning" : "bg-primary",
-                      )}
-                    />
-                    <div className="text-sm font-medium capitalize">{humanize(e.event_type)}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {dateTime(e.created_at)} · {e.actor_type} · {e.severity}
-                    </div>
-                  </li>
-                ))}
-                {!events?.length && <li className="text-sm text-muted-foreground">No events recorded.</li>}
-              </ol>
+              <AuditTimeline events={events ?? []} />
             </CardContent>
           </Card>
         </TabsContent>
