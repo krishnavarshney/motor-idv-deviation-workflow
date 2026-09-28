@@ -12,7 +12,7 @@ import { DecisionBadge } from "@/components/status";
 import { CancelJobButton } from "@/components/job-buttons";
 import { FetchRunBar } from "@/components/fetch-run-bar";
 import { LiveRefresh } from "@/components/live-refresh";
-import { RunsActivityChart, type RunsDay } from "@/components/runs-activity-chart";
+import { JobDurationChart, type DurationPoint } from "@/components/job-duration-chart";
 import { getSessionProfile } from "@/lib/api-auth";
 import { can } from "@/lib/authz";
 import { getWorkerStatus } from "@/lib/worker-status";
@@ -62,16 +62,19 @@ export default async function Runs() {
   const canRun = can(profile?.role, "run_jobs");
   const canTest = can(profile?.role, "test_lookup");
 
-  const days: RunsDay[] = Array.from({ length: 14 }, (_, i) => ({
-    day: new Date(chartFrom.getTime() + i * 86_400_000).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
-    succeeded: 0,
-    failed: 0,
-    cancelled: 0,
-  }));
-  for (const j of recent ?? []) {
-    const d = days[Math.floor((new Date(j.created_at).getTime() - chartFrom.getTime()) / 86_400_000)];
-    if (d && (j.status === "succeeded" || j.status === "failed" || j.status === "cancelled")) d[j.status as "succeeded"]++;
-  }
+  // Speed and reliability, not volume: one bar per finished job, oldest first.
+  const durations: DurationPoint[] = rows
+    .filter((j) => j.started_at && j.finished_at)
+    .slice(0, 30)
+    .reverse()
+    .map((j) => ({
+      id: j.id,
+      type: j.type,
+      status: j.status,
+      seconds: Math.round((ms(j.started_at, j.finished_at) ?? 0) / 1000),
+      label: new Date(j.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
+      when: dateTime(j.created_at),
+    }));
   const finished = (recent ?? []).filter((j) => j.status === "succeeded" || j.status === "failed");
   const successRate = finished.length ? Math.round((finished.filter((j) => j.status === "succeeded").length / finished.length) * 100) : null;
   const longest = Math.max(1, ...rows.map((j) => ms(j.started_at, j.finished_at) ?? 0));
@@ -120,11 +123,11 @@ export default async function Runs() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Card>
           <CardHeader>
-            <CardTitle>Activity</CardTitle>
-            <CardDescription>Jobs per day over the last 14 days</CardDescription>
+            <CardTitle>Job durations</CardTitle>
+            <CardDescription>Last {durations.length} finished jobs, oldest to newest · click a bar to open it</CardDescription>
           </CardHeader>
           <CardContent>
-            <RunsActivityChart data={days} />
+            <JobDurationChart data={durations} />
           </CardContent>
         </Card>
 
