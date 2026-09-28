@@ -38,7 +38,10 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
   const run = job.automation_runs;
   const active = job.status === "queued" || job.status === "running";
   const steps: JobStep[] = job.progress?.steps ?? [];
-  const title = `${job.type}${job.params?.then_evaluate ? " + evaluate" : ""}`;
+  const title =
+    job.type === "corehub_action"
+      ? `CoreHub ${job.params?.dry_run ? "rehearsal" : "action"}`
+      : `${job.type}${job.params?.then_evaluate ? " + evaluate" : ""}`;
 
   const summary = (
     <span>

@@ -34,7 +34,7 @@ export function SettingsForm({ initial }: { initial: Record<string, number> }) {
     setResult(r.ok ? "success" : "error");
     setTimeout(() => setResult("idle"), 1600);
     if (!r.ok) return notify.error("Unable to save configuration", { description: d.error });
-    notify.success("Configuration saved", { description: "Change recorded in the audit trail.", href: "/admin/rules" });
+    notify.success("Configuration saved", { description: "Change recorded in the audit trail.", href: "/admin/settings" });
     router.refresh();
   }
 
@@ -43,7 +43,7 @@ export function SettingsForm({ initial }: { initial: Record<string, number> }) {
       <Card>
         <CardHeader>
           <CardTitle>Decision rules</CardTitle>
-          <CardDescription>Admin role required. Applies to the next worker run and simulator.</CardDescription>
+          <CardDescription>When a requested IDV is auto-approved. Applies to the next worker run and the simulator.</CardDescription>
         </CardHeader>
         <CardContent>
           <FieldGroup className="grid gap-6 md:grid-cols-2">

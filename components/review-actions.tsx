@@ -40,9 +40,17 @@ export default function ReviewActions({ reviewId, caseId, completed }: { reviewI
     const d = await r.json().catch(() => ({}));
     setBusy(null);
     if (!r.ok) return notify.error("Unable to complete review", { description: d.error });
+    const verb = decision === "rejected" ? "reject" : "approve";
+    const corehub = d.corehub as { queued: boolean; dryRun?: boolean; error?: string } | null;
     notify.success(decision === "rejected" ? "Case rejected" : "Case approved", {
-      description: "Decision recorded in the audit trail.",
-      href: caseId ? "/referrals/" + caseId : undefined,
+      description: !corehub
+        ? "Decision recorded in the audit trail."
+        : corehub.queued
+          ? corehub.dryRun
+            ? `Queued a CoreHub rehearsal (dry run) — the worker will open the ${verb} dialog and cancel. You'll be notified.`
+            : `Queued to ${verb} in CoreHub — the worker re-checks the referral first. You'll be notified when it's done.`
+          : `Recorded, but not sent to CoreHub: ${corehub.error}`,
+      href: caseId ? "/referrals/" + caseId + (corehub ? "?tab=corehub" : "") : undefined,
     });
     router.push("/reviews");
     router.refresh();

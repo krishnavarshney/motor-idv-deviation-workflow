@@ -45,6 +45,9 @@ const BENCHMARK_REFERRAL: CorehubReferral = {
     yom: "2022",
   },
   vehicleDetails: null,
+  quoteStatus: null,
+  idvRange: null,
+  review: null,
 };
 
 const DEFAULT_TEST_CONFIG: DecisionConfig = {

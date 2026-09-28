@@ -17,6 +17,13 @@ assert.equal(matchObvOption(syros, "HTE 1.0 TURBO MT", "PETROL"), "HTE 1.0 Petro
 assert.equal(matchObvOption(["HTE (O) 1.5 Diesel MT"], "HTE 1.0 TURBO MT", "PETROL"), null); // fuel conflict
 assert.equal(matchObvOption(["VXI AT", "ZXI AT"], "AT"), null); // tie → no guess
 
+// Real CoreHub → OBV case (Mahindra XUV 7XO 2026): CoreHub's variant carries engine/drive/seat detail OBV omits.
+const xuv = ["AX", "AX Diesel", "AX7", "AX7 AT", "AX7 Diesel", "AX7 Diesel AT", "AX7L Diesel", "AX7T Diesel AT", "AX7T 6STR Diesel AT"];
+assert.equal(matchObvOption(xuv, "AX7 2WD DIESEL 2.2L TURBO AT 7 STR", "DIESEL"), "AX7 Diesel AT");
+// Diesel car never lands on OBV's petrol trims (no fuel word) when diesel trims exist.
+assert.equal(matchObvOption(["AX7 AT", "AX7 Diesel"], "AX7 2WD DIESEL 2.2L TURBO AT 7 STR", "DIESEL"), "AX7 Diesel");
+assert.equal(matchObvOption(["AX5 Diesel AT", "AX3 Diesel AT"], "AX7 2WD DIESEL 2.2L TURBO AT 7 STR", "DIESEL"), null); // wrong trim level
+
 assert.equal(parseYom("2021"), 2021);
 assert.equal(parseYom("12/2021"), 2021);
 assert.equal(parseYom("Mfg: 2019 (Reg 2020)"), 2019);

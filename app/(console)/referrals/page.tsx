@@ -9,6 +9,9 @@ import { PageHeader } from "@/components/console";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { EvaluateButton } from "@/components/job-buttons";
 import { FetchRunBar } from "@/components/fetch-run-bar";
+import { CorehubReady } from "@/components/corehub-ready";
+import { loadCorehubReady } from "@/lib/corehub-ready";
+import { loadAutomationSettings } from "@/lib/automation-settings";
 import { JobProgress } from "@/components/job-progress";
 import { LiveRefresh } from "@/components/live-refresh";
 import { getSessionProfile } from "@/lib/api-auth";
@@ -61,6 +64,9 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
   const jobs = activeJobs ?? [];
   const lastFetchJob = (lastFetchJobs ?? [])[0] ?? null;
   const canRun = can(profile?.role, "run_jobs");
+  // Carrying a decision out in CoreHub is an underwriting act: underwriters and admins only.
+  const ready = can(profile?.role, "review") && mode === "pending" ? await loadCorehubReady(supabase) : [];
+  const automation = await loadAutomationSettings(supabase);
   const offline = worker.online ? null : "Worker offline";
   const activeFetch = jobs.find((j) => j.type === "fetch") ?? null;
   const otherJobs = jobs.filter((j) => j.type !== "fetch");
@@ -113,7 +119,8 @@ export default async function Referrals({ searchParams }: { searchParams: Promis
         </nav>
       </div>
 
-      <LiveRefresh tables={["referral_cases", "automation_jobs"]} />
+      <LiveRefresh tables={["referral_cases", "automation_jobs", "corehub_actions"]} />
+      <CorehubReady rows={ready} dryRun={automation.dryRun} disabledReason={offline} />
       {otherJobs.length > 0 && (
         <Alert>
           <Bot />

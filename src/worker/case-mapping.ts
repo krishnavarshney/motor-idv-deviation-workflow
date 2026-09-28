@@ -1,4 +1,5 @@
 import type { CorehubReferral } from "./corehub-scraper";
+import { reviewChecks } from "./corehub-checks";
 import type { ObvBrowserResult } from "./obv-lookup";
 import type { DecisionInput, DecisionType, ProviderStatus } from "../domain/motor-idv";
 
@@ -54,6 +55,14 @@ export function newCaseRow(r: CorehubReferral, runId: string, dryRun: boolean) {
       yom: r.yom,
       quote_id: r.quoteId,
       vehicle_details: r.vehicleDetails,
+      // What CoreHub showed at fetch time, and whether the page agreed with its own API.
+      corehub: {
+        quote_status: r.quoteStatus,
+        idv_range: r.idvRange,
+        review: r.review,
+        checks: r.quoteId || r.review ? reviewChecks(r) : [],
+        fetched_at: new Date().toISOString(),
+      },
     },
   };
 }

@@ -11,6 +11,10 @@ import { DecisionBadge } from "@/components/status";
 import { DetailList, PageHeader } from "@/components/console";
 import { DecisionEvidence, VehicleCard } from "@/components/decision-evidence";
 import { EvaluateButton } from "@/components/job-buttons";
+import { CorehubEvidence, ObvLog } from "@/components/corehub-evidence";
+import { SendToCorehubButton } from "@/components/corehub-ready";
+import { planCorehubAction } from "@/lib/corehub-actions";
+import { loadAutomationSettings } from "@/lib/automation-settings";
 import { LiveRefresh } from "@/components/live-refresh";
 import { getSessionProfile } from "@/lib/api-auth";
 import { can } from "@/lib/authz";
@@ -20,11 +24,21 @@ import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Case detail" };
 
-export default async function CaseDetail({ params }: { params: Promise<{ id: string }> }) {
+const TABS = ["summary", "vehicle", "obv", "corehub", "timeline"] as const;
+
+export default async function CaseDetail({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const { id } = await params;
+  const requestedTab = (await searchParams).tab;
+  const tab = TABS.find((t) => t === requestedTab) ?? "summary";
   const supabase = await createClient();
 
-  const [{ data: caseRow }, { data: resolution }, { data: idv }, { data: decision }, { data: review }, { data: events }] =
+  const [{ data: caseRow }, { data: resolution }, { data: idv }, { data: decision }, { data: review }, { data: events }, { data: corehubActions }] =
     await Promise.all([
       supabase.from("referral_cases").select("*").eq("id", id).maybeSingle(),
       supabase.from("vehicle_resolutions").select("*").eq("case_id", id).maybeSingle(),
@@ -32,6 +46,7 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
       supabase.from("approval_decisions").select("*").eq("case_id", id).maybeSingle(),
       supabase.from("manual_reviews").select("*").eq("case_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("audit_events").select("*").eq("case_id", id).order("created_at", { ascending: false }),
+      supabase.from("corehub_actions").select("*").eq("case_id", id).order("created_at", { ascending: false }),
     ]);
 
   if (!caseRow) notFound();
@@ -40,11 +55,15 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
   const worker = await getWorkerStatus(supabase);
   const hasHumanDecision = decision?.decided_by != null || caseRow.referral_status === "rejected";
   const canReevaluate = can(profile?.role, "run_jobs") && caseRow.referral_status !== "processing" && !hasHumanDecision;
+  const latestAction = corehubActions?.[0] ?? null;
+  const corehubPlan = planCorehubAction(caseRow, latestAction, review?.reviewer_decision === "rejected" ? review.reviewer_notes : null);
+  const canSendCorehub = can(profile?.role, "review") && "action" in corehubPlan;
+  const automation = await loadAutomationSettings(supabase);
   const obvUrl = typeof idv?.raw_response?.sourceUrl === "string" && /^https?:\/\//i.test(idv.raw_response.sourceUrl) ? idv.raw_response.sourceUrl : null;
 
   return (
     <>
-      <LiveRefresh tables={["referral_cases"]} />
+      <LiveRefresh tables={["referral_cases", "corehub_actions"]} />
       <div className="flex flex-col gap-2">
         <Button variant="ghost" size="sm" asChild className="w-fit">
           <Link href="/referrals">
@@ -76,11 +95,12 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
         />
       </div>
 
-      <Tabs defaultValue="summary" className="flex flex-col gap-4">
+      <Tabs defaultValue={tab} className="flex flex-col gap-4">
         <TabsList>
           <TabsTrigger value="summary">Summary</TabsTrigger>
           <TabsTrigger value="vehicle">Vehicle match</TabsTrigger>
           <TabsTrigger value="obv">OBV evidence</TabsTrigger>
+          <TabsTrigger value="corehub">CoreHub</TabsTrigger>
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
         </TabsList>
 
@@ -165,6 +185,26 @@ export default async function CaseDetail({ params }: { params: Promise<{ id: str
               </TableBody>
             </Table>
           </Card>
+          <ObvLog log={idv?.raw_response?.log} />
+        </TabsContent>
+
+        <TabsContent value="corehub">
+          <CorehubEvidence
+            caseRow={caseRow}
+            actions={corehubActions ?? []}
+            sendButton={
+              canSendCorehub && "action" in corehubPlan ? (
+                <SendToCorehubButton
+                  caseId={caseRow.id}
+                  action={corehubPlan.action}
+                  reason={corehubPlan.reason}
+                  dryRun={automation.dryRun}
+                  retry={!!latestAction}
+                  disabledReason={worker.online ? null : "Worker offline"}
+                />
+              ) : null
+            }
+          />
         </TabsContent>
 
         <TabsContent value="timeline">
