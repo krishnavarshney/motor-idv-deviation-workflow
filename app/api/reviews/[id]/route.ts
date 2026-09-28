@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAction } from "@/lib/api-auth";
+import { enqueueCorehubActions } from "@/lib/corehub-enqueue";
+import { loadAutomationSettings } from "@/lib/automation-settings";
 
 export async function POST(
   request: Request,
@@ -38,7 +40,7 @@ export async function POST(
   const now = new Date().toISOString();
   const { data: caseRow } = await supabase
     .from("referral_cases")
-    .select("requested_idv,correlation_id")
+    .select("requested_idv,correlation_id,source_system")
     .eq("id", review.case_id)
     .maybeSingle();
 
@@ -128,5 +130,13 @@ export async function POST(
     correlation_id: caseRow?.correlation_id,
   });
 
-  return NextResponse.json({ ok: true });
+  // The underwriter's confirmed decision is carried out in CoreHub straight away (the worker re-checks
+  // the live referral first). Queued even if the worker is offline — it runs when the worker is back.
+  let corehub: { queued: boolean; action?: string; dryRun?: boolean; error?: string } | null = null;
+  if (caseRow?.source_system === "corehub-browser" && (await loadAutomationSettings(supabase)).autoSendReviews) {
+    const r = await enqueueCorehubActions(supabase, user.id, [review.case_id]);
+    corehub = r.ok ? { queued: true, action: r.queued[0]?.action, dryRun: r.dryRun } : { queued: false, error: r.error };
+  }
+
+  return NextResponse.json({ ok: true, corehub });
 }

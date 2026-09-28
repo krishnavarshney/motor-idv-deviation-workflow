@@ -3,6 +3,7 @@ import { requireAction } from "@/lib/api-auth";
 import { parseJobRequest } from "@/lib/jobs";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getWorkerStatus } from "@/lib/worker-status";
+import { loadAutomationSettings } from "@/lib/automation-settings";
 
 export async function POST(request: Request) {
   const auth = await requireAction("run_jobs");
@@ -25,9 +26,12 @@ export async function POST(request: Request) {
     if (count) return NextResponse.json({ error: "A CoreHub fetch is already queued or running" }, { status: 409 });
   }
 
+  const settings = await loadAutomationSettings(supabase);
   const params = {
-    dry_run: process.env.AUTOMATION_DRY_RUN !== "false",
+    dry_run: settings.dryRun,
     completion_mode: "in_app",
+    // Settings → "Evaluate after fetch": a console fetch evaluates what it brings in, like a scheduled run.
+    ...(req.type === "fetch" && settings.fetchAutoEvaluate ? { then_evaluate: true } : {}),
     ...(req.type === "evaluate" ? ("all_received" in req ? { all_received: true } : { case_ids: req.case_ids }) : {}),
   };
   let admin;

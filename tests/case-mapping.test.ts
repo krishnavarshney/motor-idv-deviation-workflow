@@ -53,6 +53,9 @@ function main() {
       yom: 2021,
       rawValues: { a: "b" },
       vehicleDetails: { colour: "white" },
+      quoteStatus: "Underwriter review",
+      idvRange: { min: 400000, max: 520000 },
+      review: null,
     },
     "run-1",
     true,
@@ -61,7 +64,12 @@ function main() {
   assert.equal(row.referral_status, "received");
   assert.equal(row.workflow_status, "intake_pending");
   assert.equal(row.automation_run_id, "run-1");
-  assert.deepEqual(row.metadata, { dry_run: true, raw_values: { a: "b" }, yom: 2021, quote_id: "Q-1", vehicle_details: { colour: "white" } });
+  const { corehub, ...meta } = row.metadata;
+  assert.deepEqual(meta, { dry_run: true, raw_values: { a: "b" }, yom: 2021, quote_id: "Q-1", vehicle_details: { colour: "white" } });
+  // Fetch-time CoreHub evidence travels with the case; an unread review page is flagged, not passed.
+  assert.equal(corehub.quote_status, "Underwriter review");
+  assert.deepEqual(corehub.idv_range, { min: 400000, max: 520000 });
+  assert.ok(corehub.checks.some((c) => c.key === "review_page" && c.ok === false));
 
   console.log("case mapping tests passed");
 }

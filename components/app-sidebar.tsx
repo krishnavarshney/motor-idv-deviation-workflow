@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { ActiveJobsBadge } from "@/components/active-jobs-badge";
 import { activeHref, visibleNav } from "@/components/nav";
 import type { Role } from "@/lib/authz";
 
@@ -41,11 +42,14 @@ export function AppSidebar({
   fullName,
   role,
   badges,
+  activeJobs = { queued: 0, running: 0 },
 }: {
   userEmail: string;
   fullName: string | null;
   role: Role | null;
   badges: Record<string, number>;
+  /** Queued/running automation jobs, shown live on Runs. */
+  activeJobs?: { queued: number; running: number };
 }) {
   const pathname = usePathname();
   const active = activeHref(pathname);
@@ -85,7 +89,11 @@ export function AppSidebar({
                       <span>{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
-                  {badges[item.href] ? <SidebarMenuBadge>{badges[item.href]}</SidebarMenuBadge> : null}
+                  {item.href === "/automation" ? (
+                    <ActiveJobsBadge initial={activeJobs} />
+                  ) : badges[item.href] ? (
+                    <SidebarMenuBadge>{badges[item.href]}</SidebarMenuBadge>
+                  ) : null}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>

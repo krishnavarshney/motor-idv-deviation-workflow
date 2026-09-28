@@ -23,7 +23,23 @@ const RECENT_MS = 2 * 60_000;
  * automation_jobs row the worker updates at each checkpoint; the page re-renders on
  * Realtime changes (LiveRefresh), so this only derives display state and ticks the clock.
  */
-export function FetchRunBar({ active, last, disabledReason }: { active: FetchJob | null; last: FetchJob | null; disabledReason: string | null | false }) {
+export function FetchRunBar({
+  active,
+  last,
+  disabledReason,
+  summary: summaryOverride,
+  showJobLink = true,
+  keepOutcome = false,
+}: {
+  active: FetchJob | null;
+  last: FetchJob | null;
+  /** false hides the Fetch button (no run_jobs role, or on a job's own page). */
+  disabledReason: string | null | false;
+  summary?: React.ReactNode;
+  showJobLink?: boolean;
+  /** Keep the done/failed state instead of settling to idle after a couple of minutes. */
+  keepOutcome?: boolean;
+}) {
   const [now, setNow] = useState(() => Date.now());
   const running = active?.status === "running";
   useEffect(() => {
@@ -33,7 +49,7 @@ export function FetchRunBar({ active, last, disabledReason }: { active: FetchJob
   }, [running]);
 
   const job = active ?? last;
-  const recent = !!last?.finished_at && now - new Date(last.finished_at).getTime() < RECENT_MS;
+  const recent = keepOutcome || (!!last?.finished_at && now - new Date(last.finished_at).getTime() < RECENT_MS);
   const status: RunStatus = active
     ? "running"
     : last && recent
@@ -51,7 +67,7 @@ export function FetchRunBar({ active, last, disabledReason }: { active: FetchJob
   const elapsedMs = start && end ? Math.max(0, end - start) : 0;
   const newCount = last?.progress?.case_ids?.length ?? 0;
 
-  const summary = !last ? (
+  const summary = summaryOverride ?? (!last ? (
     <span className="text-muted-foreground">No CoreHub fetch yet</span>
   ) : last.status === "failed" ? (
     <span className="text-destructive">Last fetch failed{last.error ? ` · ${last.error}` : ""}</span>
@@ -59,7 +75,7 @@ export function FetchRunBar({ active, last, disabledReason }: { active: FetchJob
     <span>
       Last fetch {timeAgo(last.finished_at)} · <span className="font-mono tabular-nums">{newCount}</span> new referral{newCount === 1 ? "" : "s"}
     </span>
-  );
+  ));
 
   return (
     <RunBar
@@ -70,7 +86,7 @@ export function FetchRunBar({ active, last, disabledReason }: { active: FetchJob
       summary={summary}
       actions={
         <>
-          {job && (
+          {job && showJobLink && (
             <Button asChild size="sm" variant="ghost">
               <Link href={`/automation/jobs/${job.id}`}>
                 View job

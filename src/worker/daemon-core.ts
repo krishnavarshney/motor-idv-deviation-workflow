@@ -7,7 +7,7 @@ import { nextRunAt, type CompletionMode } from "../../lib/schedule";
 
 export const STALE_AFTER_MS = 5 * 60_000;
 
-export type JobType = "fetch" | "evaluate";
+export type JobType = "fetch" | "evaluate" | "corehub_action";
 
 export interface JobParams {
   dry_run: boolean;
@@ -15,6 +15,8 @@ export interface JobParams {
   then_evaluate?: boolean;
   case_ids?: string[];
   all_received?: boolean;
+  /** corehub_action jobs: corehub_actions rows to run */
+  action_ids?: string[];
 }
 
 export interface Job {

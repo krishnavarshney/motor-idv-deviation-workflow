@@ -45,6 +45,11 @@ export interface ObvBrowserResult {
 }
 
 const OBV_ORIGIN = "https://www.orangebookvalue.com";
+// "TypeError: fetch failed" hides the real reason (TLS, DNS, reset) in err.cause.
+const errText = (err: unknown) => {
+  const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+  return cause ? `${String(err)} — ${[cause.code, cause.message].filter(Boolean).join(": ")}` : String(err);
+};
 // OBV's CDN 403s requests without a browser user agent.
 const OBV_HEADERS = {
   "User-Agent":
@@ -121,7 +126,7 @@ export async function lookupObvHttp(vehicle: ObvVehicleInput): Promise<ObvBrowse
     if (!res.ok) return fail("NAVIGATION_ERROR", { status: res.status });
     html = await res.text();
   } catch (err) {
-    return fail(err instanceof Error && err.name === "TimeoutError" ? "TIMEOUT" : "NAVIGATION_ERROR", { error: String(err) });
+    return fail(err instanceof Error && err.name === "TimeoutError" ? "TIMEOUT" : "NAVIGATION_ERROR", { error: errText(err) });
   }
 
   const bands: Record<string, { from?: number; to?: number }> = {};
@@ -146,9 +151,12 @@ const FUELS = ["petrol", "diesel", "cng", "electric"];
 const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9.]+/).filter(Boolean);
 
 /**
- * Best OBV option for a free-text value. Case-insensitive exact match wins; otherwise the option
- * sharing the most words (Jaccard >= 0.5) wins, but only if it is the single best. An option naming
- * a different fuel is never picked. null = no confident match — callers route to manual review.
+ * Best OBV option for a free-text value. Case-insensitive exact match wins. Otherwise options are
+ * ranked by containment — how much of the shorter name the other covers (CoreHub's
+ * "AX7 2WD DIESEL 2.2L TURBO AT 7 STR" fully covers OBV's "AX7 Diesel AT") — then by words shared,
+ * then by fewest extra words. The top option must be unique and at least 75% contained.
+ * Fuel is never crossed: an option naming another fuel is dropped, and when CoreHub names a fuel
+ * that some options mention, only those are considered. null = no confident match → manual review.
  */
 export function matchObvOption(options: string[], value: string, fuel?: string | null): string | null {
   const t = value.toLowerCase().trim();
@@ -158,37 +166,60 @@ export function matchObvOption(options: string[], value: string, fuel?: string |
 
   const want = new Set(tokens(`${value} ${fuel ?? ""}`));
   const wantFuel = FUELS.find((f) => want.has(f));
-  let best: string | null = null;
-  let bestScore = 0;
-  let tie = false;
-  for (const o of options) {
-    const have = new Set(tokens(o));
-    if (wantFuel && FUELS.some((f) => f !== wantFuel && have.has(f))) continue;
-    const shared = [...want].filter((w) => have.has(w)).length;
-    const score = shared / new Set([...want, ...have]).size;
-    if (score > bestScore) [best, bestScore, tie] = [o, score, false];
-    else if (score === bestScore && score > 0) tie = true;
+  let pool = options.map((o) => ({ o, have: new Set(tokens(o)) }));
+  if (wantFuel) {
+    pool = pool.filter(({ have }) => !FUELS.some((f) => f !== wantFuel && have.has(f)));
+    if (pool.some(({ have }) => have.has(wantFuel))) pool = pool.filter(({ have }) => have.has(wantFuel));
   }
-  return bestScore >= 0.5 && !tie ? best : null;
+  const ranked = pool
+    .map(({ o, have }) => {
+      const shared = [...want].filter((w) => have.has(w)).length;
+      const union = new Set([...want, ...have]).size;
+      return { o, shared, union, containment: shared / Math.min(want.size, have.size) };
+    })
+    .filter((r) => r.shared > 0 && r.containment >= 0.75)
+    .sort((a, b) => b.containment - a.containment || b.shared - a.shared || a.union - b.union);
+  const [best, second] = ranked;
+  if (!best) return null;
+  const tied = second && second.containment === best.containment && second.shared === best.shared && second.union === best.union;
+  return tied ? null : best.o;
 }
 
 type ObvVehicleInput = { make: string; model: string; variant: string; year?: string | number; kmsDriven?: string | number; fuel?: string | null };
+
+export interface ObvLogLine {
+  at: string;
+  step: string;
+  detail: string;
+  data?: unknown;
+}
 
 /**
  * Map raw intake names (e.g. CoreHub "VOLKSWAGEN" / "TIGUAN") onto OBV's catalog, one level at a time.
  * Returns the first field OBV has no match for instead of guessing.
  */
 export async function resolveObvVehicle(
-  v: ObvVehicleInput
+  v: ObvVehicleInput,
+  log: (line: Omit<ObvLogLine, "at">) => void = () => {}
 ): Promise<{ make: string; model: string; year: string; variant: string } | { unmatched: "make" | "model" | "year" | "variant" }> {
-  const make = matchObvOption(await fetchObvOptions({}), v.make);
+  const level = async (field: "make" | "model" | "year" | "variant", input: string | undefined, q: Parameters<typeof fetchObvOptions>[0], fuel?: string | null) => {
+    const options = input ? await fetchObvOptions(q) : [];
+    const matched = input ? matchObvOption(options, input, fuel) : null;
+    log({
+      step: `match_${field}`,
+      detail: matched ? `${field} "${input}" → "${matched}"` : input ? `${field} "${input}" not in OBV's ${options.length} options` : `${field} missing`,
+      data: { input: input ?? null, matched, options: options.length > 40 ? `${options.length} options` : options },
+    });
+    return matched;
+  };
+  const make = await level("make", v.make, {});
   if (!make) return { unmatched: "make" };
-  const model = matchObvOption(await fetchObvOptions({ make }), v.model);
+  const model = await level("model", v.model, { make });
   if (!model) return { unmatched: "model" };
   // No YOM = no valuation: a guessed year would value the wrong car.
-  const year = v.year ? matchObvOption(await fetchObvOptions({ make, model }), String(v.year)) : null;
+  const year = await level("year", v.year ? String(v.year) : undefined, { make, model });
   if (!year) return { unmatched: "year" };
-  const variant = matchObvOption(await fetchObvOptions({ make, model, year }), v.variant, v.fuel);
+  const variant = await level("variant", v.variant, { make, model, year }, v.fuel);
   if (!variant) return { unmatched: "variant" };
   return { make, model, year, variant };
 }
@@ -206,14 +237,26 @@ export async function lookupObv(vehicle: ObvVehicleInput): Promise<ObvBrowserRes
     raw,
   });
 
+  // Step-by-step log kept with the result, so a decision can be traced back to exactly what OBV said.
+  const log: ObvLogLine[] = [];
+  const add = (l: Omit<ObvLogLine, "at">) => log.push({ at: new Date().toISOString(), ...l });
+
   let resolved: Awaited<ReturnType<typeof resolveObvVehicle>>;
   try {
-    resolved = await resolveObvVehicle(vehicle);
+    resolved = await resolveObvVehicle(vehicle, add);
   } catch (err) {
-    return fail("NAVIGATION_ERROR", { error: String(err), input: vehicle });
+    add({ step: "catalog_error", detail: errText(err) });
+    return fail("NAVIGATION_ERROR", { error: errText(err), input: vehicle, log });
   }
-  if ("unmatched" in resolved) return fail("NO_RESULTS", { unmatched: resolved.unmatched, input: vehicle });
+  if ("unmatched" in resolved) return fail("NO_RESULTS", { unmatched: resolved.unmatched, input: vehicle, log });
 
   const result = await lookupObvHttp({ ...resolved, kmsDriven: vehicle.kmsDriven });
-  return { ...result, latencyMs: Date.now() - started, raw: { ...(result.raw as object | undefined), resolved, input: vehicle } };
+  add({
+    step: "valuation",
+    detail: result.success
+      ? `OBV valued ${resolved.make} ${resolved.model} ${resolved.variant} ${resolved.year} in ${result.latencyMs} ms`
+      : `OBV valuation failed: ${result.reasonCode}`,
+    data: { request: { ...resolved, kmsDriven: vehicle.kmsDriven ?? 15000 }, reasonCode: result.reasonCode, sourceUrl: result.sourceUrl, conditions: result.conditions ?? null, raw: result.raw },
+  });
+  return { ...result, latencyMs: Date.now() - started, raw: { ...(result.raw as object | undefined), resolved, input: vehicle, log } };
 }

@@ -2,13 +2,15 @@
  * Reusable worker pipeline steps shared by the CLI (run.ts) and the daemon.
  * fetchReferrals: CoreHub → referral_cases (status received)
  * evaluateCases:  referral_cases → OBV → decision engine → decisions/reviews
+ * executeCorehubActions: person-confirmed Approve/Reject → re-check live referral → CoreHub button
  */
 
 import { chromium, type BrowserContext } from "playwright";
 import { existsSync } from "fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { WorkerConfig } from "./config";
-import { openReferral, scrapeCorehub, type CorehubReferral } from "./corehub-scraper";
+import { openReferral, performCorehubAction, scrapeCorehub, type ActionLogLine, type CorehubReferral } from "./corehub-scraper";
+import { actionChecks, blocking, type Check } from "./corehub-checks";
 import { lookupObv, type ObvBrowserResult } from "./obv-lookup";
 import { reconcileConditionBands } from "./reconcile";
 import { BROWSER_VEHICLE_CONFIDENCE, caseStatusesFor, decisionInputFor, hasHumanDecision, newCaseRow, providerStatusFor } from "./case-mapping";
@@ -125,13 +127,47 @@ export async function fetchReferrals(s: Session, onStep?: StepReporter): Promise
     }
     if (!result.referrals.length) return { discovered: 0, newCaseIds: [] };
 
-    // Vehicle + requested IDV live on the quote the review page loads; open only referrals we don't have yet.
+    // Vehicle + requested IDV live on the quote the review page loads; open only referrals we don't have yet,
+    // plus ones stored earlier without vehicle data (their review page couldn't be read) and still undecided.
     const { data: known, error: knownError } = await s.supabase
       .from("referral_cases")
-      .select("external_case_id")
+      .select("id,external_case_id,make_raw,referral_status,metadata")
       .in("external_case_id", result.referrals.map((r) => r.externalCaseId));
     if (knownError) throw new Error(`Failed to check existing referrals: ${knownError.message}`);
     const knownIds = new Set((known ?? []).map((k) => k.external_case_id as string));
+    const incomplete = new Map(
+      (known ?? [])
+        .filter((k) => !k.make_raw && ["received", "failed", "manual_review"].includes(k.referral_status))
+        .map((k) => [k.external_case_id as string, k]),
+    );
+    const refreshedIds: string[] = [];
+    for (const listed of result.referrals.filter((r) => incomplete.has(r.externalCaseId))) {
+      const k = incomplete.get(listed.externalCaseId)!;
+      await step(`Re-reading ${listed.externalCaseId} (stored without vehicle details)`);
+      try {
+        const o = await openReferral(page, s.config, listed);
+        const row = newCaseRow(o, s.runId, s.config.dryRun);
+        const { error: updateError } = await s.supabase
+          .from("referral_cases")
+          .update({
+            registration_number: row.registration_number,
+            make_raw: row.make_raw,
+            model_raw: row.model_raw,
+            variant_raw: row.variant_raw,
+            fuel_type_raw: row.fuel_type_raw,
+            requested_idv: row.requested_idv,
+            referral_status: "received",
+            workflow_status: "intake_pending",
+            last_error_message: null,
+            metadata: { ...(k.metadata ?? {}), ...row.metadata },
+          })
+          .eq("id", k.id);
+        if (updateError) throw new Error(updateError.message);
+        refreshedIds.push(k.id as string);
+      } catch (err) {
+        console.error(`   Could not re-read ${listed.externalCaseId}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     const opened: CorehubReferral[] = [];
     const fresh = result.referrals.filter((r) => !knownIds.has(r.externalCaseId));
     for (const [i, listed] of fresh.entries()) {
@@ -144,7 +180,7 @@ export async function fetchReferrals(s: Session, onStep?: StepReporter): Promise
         opened.push(listed);
       }
     }
-    if (!opened.length) return { discovered: result.referrals.length, newCaseIds: [] };
+    if (!opened.length) return { discovered: result.referrals.length, newCaseIds: refreshedIds };
 
     await step(`Saving ${opened.length} new referral${opened.length === 1 ? "" : "s"}`, fresh.length, fresh.length);
     // ON CONFLICT DO NOTHING: a referral stored meanwhile by another run is skipped.
@@ -171,7 +207,7 @@ export async function fetchReferrals(s: Session, onStep?: StepReporter): Promise
       );
     }
     console.log(`📊 CoreHub: ${result.referrals.length} referrals, ${rows.length} new`);
-    return { discovered: result.referrals.length, newCaseIds: rows.map((r) => r.id as string) };
+    return { discovered: result.referrals.length, newCaseIds: [...refreshedIds, ...rows.map((r) => r.id as string)] };
   } finally {
     await page.close();
   }
@@ -206,6 +242,9 @@ async function evaluateOne(s: Session, c: any) {
 
   const requestedIdv = c.requested_idv == null ? null : Number(c.requested_idv);
   const decision = evaluateIdvDecision(decisionInputFor(requestedIdv, obv), s.decisionConfig);
+  const obvRaw = obv.raw as { resolved?: { make: string; model: string; variant: string; year: string }; unmatched?: string } | undefined;
+  const resolved = obvRaw?.resolved ?? null;
+  const unmatched = obvRaw?.unmatched ?? null;
   const now = new Date().toISOString();
 
   // Upserts on case_id so a re-evaluation replaces the previous evidence.
@@ -220,13 +259,19 @@ async function evaluateOne(s: Session, c: any) {
         normalized_fuel: c.fuel_type_raw?.toUpperCase() ?? null,
         normalized_cc: c.cc_raw ? Number(c.cc_raw) : null,
         candidate_source: "corehub-browser",
-        resolved_vehicle_key: [c.make_raw, c.model_raw, c.variant_raw].filter(Boolean).join("-").toUpperCase().replace(/\s+/g, ""),
-        resolved_make: c.make_raw,
-        resolved_model: c.model_raw,
-        resolved_variant: c.variant_raw,
-        confidence_score: BROWSER_VEHICLE_CONFIDENCE,
-        match_strategy: "browser_extraction",
-        match_reason_codes: ["COREHUB_BROWSER_EXTRACT"],
+        // Resolved = the exact OBV catalogue entry that was valued; null when OBV had no confident match.
+        resolved_vehicle_key: resolved
+          ? ["OBV", resolved.make, resolved.model, resolved.variant, resolved.year].join("-").toUpperCase().replace(/\s+/g, "")
+          : null,
+        resolved_make: resolved?.make ?? null,
+        resolved_model: resolved?.model ?? null,
+        resolved_variant: resolved ? `${resolved.variant} (${resolved.year})` : null,
+        confidence_score: resolved ? BROWSER_VEHICLE_CONFIDENCE : null,
+        match_strategy: resolved ? "obv_catalog_match" : unmatched ? `no_obv_${unmatched}_match` : "not_looked_up",
+        match_reason_codes: [
+          "COREHUB_QUOTE_API",
+          ...(resolved ? ["OBV_CATALOG_MATCH"] : unmatched ? [`OBV_${unmatched.toUpperCase()}_UNMATCHED`] : []),
+        ],
       },
       { onConflict: "case_id" },
     )
@@ -253,7 +298,13 @@ async function evaluateOne(s: Session, c: any) {
           // Exact OBV names the raw CoreHub values resolved to (absent when a field had no match).
           resolved: (obv.raw as { resolved?: unknown } | undefined)?.resolved ?? null,
         },
-        raw_response: { idv: obv.idv, sourceUrl: obv.sourceUrl, reasonCode: obv.reasonCode, conditions: obv.conditions ?? null },
+        raw_response: {
+          idv: obv.idv,
+          sourceUrl: obv.sourceUrl,
+          reasonCode: obv.reasonCode,
+          conditions: obv.conditions ?? null,
+          log: (obv.raw as { log?: unknown } | undefined)?.log ?? [],
+        },
       },
       { onConflict: "case_id" },
     )
@@ -390,6 +441,169 @@ export async function evaluateCases(
       });
     }
     await onProgress?.(i + 1, rows.length);
+  }
+  return counts;
+}
+
+/** Just enough of a stored case to reopen it in CoreHub. */
+function referralFromCase(c: { external_case_id: string; metadata?: { quote_id?: string | null } | null }): CorehubReferral {
+  return {
+    externalCaseId: c.external_case_id,
+    registrationNumber: null,
+    quoteId: c.metadata?.quote_id ?? null,
+    make: null,
+    model: null,
+    variant: null,
+    fuelType: null,
+    cc: null,
+    requestedIdv: null,
+    yom: null,
+    rawValues: {},
+    vehicleDetails: null,
+    quoteStatus: null,
+    idvRange: null,
+    review: null,
+  };
+}
+
+/** Tell the person who confirmed the action how it went (notification center; service role). */
+async function notifyRequester(
+  s: Session,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  a: any,
+  kind: "success" | "info" | "error",
+  title: string,
+  description: string,
+) {
+  if (!a.requested_by) return;
+  await s.supabase
+    .from("notifications")
+    .insert({ user_id: a.requested_by, kind, title: title.slice(0, 200), description: description.slice(0, 1000), href: `/referrals/${a.case_id}?tab=corehub` })
+    .then(
+      () => {},
+      () => {},
+    );
+}
+
+// The console decision each CoreHub action must still agree with when the worker gets to it.
+const REQUIRED_STATUS = { approve: "approved", reject: "rejected" } as const;
+
+/**
+ * Run queued CoreHub actions one by one. Each attempt: confirm our own decision still matches →
+ * open the live referral → re-check it against what was evaluated → click the button (or rehearse).
+ * Any failed check stops that action before anything is clicked. Every step lands in the action's log.
+ */
+export async function executeCorehubActions(
+  s: Session,
+  actionIds: string[],
+  onProgress?: (done: number, total: number, label: string) => Promise<void>,
+) {
+  const counts = { casesProcessed: 0, casesErrored: 0, errors: [] as string[] };
+  const { data: actions, error } = await s.supabase
+    .from("corehub_actions")
+    .select("*, referral_cases(*)")
+    .in("id", actionIds)
+    .eq("status", "queued")
+    .order("created_at");
+  if (error) throw new Error(`Failed to load CoreHub actions: ${error.message}`);
+  const rows = actions ?? [];
+  if (!rows.length) return counts;
+
+  const page = await s.context.newPage();
+  try {
+    for (const [i, a] of rows.entries()) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const c = a.referral_cases as any;
+      const verb = a.action === "approve" ? "Approving" : "Rejecting";
+      await onProgress?.(i, rows.length, `${a.dry_run ? "Rehearsing" : verb} ${c.external_case_id} in CoreHub`);
+
+      const log: ActionLogLine[] = [];
+      const add = (msg: string, data?: unknown) => log.push({ at: new Date().toISOString(), msg, data });
+      let checks: Check[] = [];
+      let write: unknown = null;
+      await s.supabase.from("corehub_actions").update({ status: "running", started_at: new Date().toISOString(), job_id: a.job_id }).eq("id", a.id);
+
+      try {
+        const required = REQUIRED_STATUS[a.action as "approve" | "reject"];
+        if (c.referral_status !== required) {
+          throw new Error(`Case is now "${c.referral_status}" in the console, not "${required}" — re-confirm before sending to CoreHub`);
+        }
+        add(`Console decision is ${c.referral_status}; opening ${c.external_case_id} in CoreHub`);
+
+        const live = await openReferral(page, s.config, referralFromCase(c));
+        add("Read live quote and review page", {
+          url: live.review?.url ?? page.url(),
+          quote_status: live.quoteStatus,
+          requested_idv: live.requestedIdv,
+          vehicle: [live.make, live.model, live.variant, live.fuelType, live.yom].filter(Boolean).join(" "),
+          page_fields: live.review?.fields ?? null,
+        });
+
+        checks = actionChecks(c, live);
+        const failed = blocking(checks);
+        add(failed.length ? `${failed.length} pre-check(s) failed — not clicking anything` : `All ${checks.length} pre-checks passed`, checks);
+        if (failed.length) throw new Error(failed.map((k) => `${k.label}: ${k.detail}`).join("; "));
+
+        const result = await performCorehubAction(page, s.config, { action: a.action, reason: a.reason, dryRun: a.dry_run }, add);
+        write = result.write;
+        const now = new Date().toISOString();
+        await s.supabase
+          .from("corehub_actions")
+          .update({ status: result.outcome === "submitted" ? "succeeded" : "rehearsed", checks, log, corehub_response: write, finished_at: now })
+          .eq("id", a.id);
+
+        if (result.outcome === "submitted") {
+          await s.supabase
+            .from("referral_cases")
+            .update({
+              workflow_status: "completed",
+              metadata: { ...(c.metadata ?? {}), corehub_action: { id: a.id, action: a.action, at: now } },
+            })
+            .eq("id", c.id);
+        }
+        const past = a.action === "approve" ? "approved" : "rejected";
+        await notifyRequester(
+          s,
+          a,
+          result.outcome === "submitted" ? "success" : "info",
+          result.outcome === "submitted" ? `${c.external_case_id} ${past} in CoreHub` : `${c.external_case_id}: CoreHub rehearsal done`,
+          result.outcome === "submitted"
+            ? `CoreHub accepted the ${a.action} (HTTP ${result.write?.status}). The agent has been notified by CoreHub.`
+            : `All ${checks.length} live checks passed and the "Yes, ${a.action === "approve" ? "Approve" : "Reject"}" dialog opened — cancelled because this is a dry run.`,
+        );
+        await s.supabase.from("audit_events").insert({
+          case_id: c.id,
+          event_type: result.outcome === "submitted" ? `corehub_${a.action}_submitted` : "corehub_action_rehearsed",
+          actor_type: "automation",
+          severity: "info",
+          payload: { actionId: a.id, action: a.action, dryRun: a.dry_run, requestedBy: a.requested_by, corehubStatus: result.write?.status ?? null, runId: s.runId },
+          correlation_id: c.correlation_id,
+        });
+        counts.casesProcessed++;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        add(`Stopped: ${message}`);
+        write = (err as { write?: unknown }).write ?? write;
+        counts.casesErrored++;
+        counts.errors.push(`${c.external_case_id}: ${message}`);
+        await s.supabase
+          .from("corehub_actions")
+          .update({ status: "failed", checks, log, corehub_response: write, error: message, finished_at: new Date().toISOString() })
+          .eq("id", a.id);
+        await notifyRequester(s, a, "error", `${c.external_case_id}: not ${a.action === "approve" ? "approved" : "rejected"} in CoreHub`, message);
+        await s.supabase.from("audit_events").insert({
+          case_id: c.id,
+          event_type: "corehub_action_failed",
+          actor_type: "automation",
+          severity: "error",
+          payload: { actionId: a.id, action: a.action, error: message, runId: s.runId },
+          correlation_id: c.correlation_id,
+        });
+      }
+      await onProgress?.(i + 1, rows.length, `${a.dry_run ? "Rehearsed" : "Sent"} ${i + 1} of ${rows.length}`);
+    }
+  } finally {
+    await page.close();
   }
   return counts;
 }

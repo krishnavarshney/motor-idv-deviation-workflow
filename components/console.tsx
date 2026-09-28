@@ -29,7 +29,7 @@ export function PageHeader({
   );
 }
 
-export function KpiCard({ label, value, foot, icon: Icon }: { label: string; value: number | string; foot?: string; icon: LucideIcon }) {
+export function KpiCard({ label, value, foot, icon: Icon }: { label: string; value: number | React.ReactNode; foot?: string; icon: LucideIcon }) {
   return (
     <MagicCard className="rounded-xl">
       <Card size="sm" className="bg-transparent ring-0">

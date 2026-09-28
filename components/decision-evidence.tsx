@@ -85,6 +85,14 @@ export function VehicleCard({ resolution, fallback }: { resolution: any; fallbac
             {resolution?.normalized_fuel || fallback?.fuel_type_raw || "Fuel n/a"} ·{" "}
             {resolution?.normalized_cc || fallback?.cc_raw || "CC n/a"} CC
           </div>
+          {resolution?.resolved_make && fallback?.make_raw && (
+            <div className="mt-1 text-xs text-muted-foreground">
+              OBV catalogue match for CoreHub “{[fallback.make_raw, fallback.model_raw, fallback.variant_raw].filter(Boolean).join(" ")}”
+            </div>
+          )}
+          {!resolution && fallback?.referral_status === "received" && (
+            <div className="mt-1 text-xs text-muted-foreground">Resolved when the case is evaluated.</div>
+          )}
         </div>
         <div className="flex items-center justify-between gap-4 rounded-lg bg-muted/50 px-3 py-2">
           <span className="text-xs text-muted-foreground">Match confidence</span>

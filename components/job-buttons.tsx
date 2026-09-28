@@ -21,13 +21,15 @@ async function post(url: string, body?: unknown) {
 function useJobAction() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const run = async (url: string, body: unknown, success: string, onDone?: () => void) => {
+  /** openJob: jump to the queued job's page so progress is visible right away. */
+  const run = async (url: string, body: unknown, success: string, onDone?: () => void, openJob = false) => {
     setBusy(true);
     try {
-      await post(url, body);
-      notify.success(success);
+      const d = await post(url, body);
+      notify.success(success, openJob && d?.id ? { href: `/automation/jobs/${d.id}` } : undefined);
       onDone?.();
-      router.refresh();
+      if (openJob && d?.id) router.push(`/automation/jobs/${d.id}`);
+      else router.refresh();
     } catch (err) {
       notify.error(err instanceof Error ? err.message : "Request failed");
     } finally {
@@ -47,7 +49,7 @@ export function FetchButton({ disabledReason }: { disabledReason: string | null 
   return (
     <div className="flex items-center gap-2">
       <Reason text={disabledReason} />
-      <Button disabled={busy || !!disabledReason} onClick={() => run("/api/jobs", { type: "fetch" }, "Fetch from CoreHub queued")}>
+      <Button disabled={busy || !!disabledReason} onClick={() => run("/api/jobs", { type: "fetch" }, "Fetch from CoreHub queued", undefined, true)}>
         {busy ? <Spinner data-icon="inline-start" /> : <CloudDownload data-icon="inline-start" />}
         Fetch from CoreHub
       </Button>
@@ -79,7 +81,7 @@ export function EvaluateButton({
         size="sm"
         variant={variant}
         disabled={busy || !!disabledReason || (!all && caseIds.length === 0)}
-        onClick={() => run("/api/jobs", body, "Evaluation queued", onDone)}
+        onClick={() => run("/api/jobs", body, "Evaluation queued", onDone, true)}
       >
         {busy ? <Spinner data-icon="inline-start" /> : <Play data-icon="inline-start" />}
         {label}

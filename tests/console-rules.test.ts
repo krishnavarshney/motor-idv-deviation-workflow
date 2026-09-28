@@ -44,7 +44,7 @@ function main() {
   assert.deepEqual(titles("operator"), ["Overview", "Referrals", "Runs", "Schedules"]);
   assert.deepEqual(titles("underwriter"), ["Overview", "Referrals", "Review queue", "Runs", "Schedules", "Simulator"]);
   assert.deepEqual(titles("auditor"), ["Overview", "Referrals", "Runs", "Schedules", "Audit log"]);
-  assert.deepEqual(titles("admin"), ["Overview", "Referrals", "Review queue", "Runs", "Schedules", "Simulator", "Decision rules", "Team", "Audit log"]);
+  assert.deepEqual(titles("admin"), ["Overview", "Referrals", "Review queue", "Runs", "Schedules", "Simulator", "Settings", "Team", "Audit log"]);
   assert.deepEqual(visibleNav(null), []);
   assert.equal(activeHref("/automation/schedules"), "/automation/schedules");
   assert.equal(activeHref("/automation/jobs/123"), "/automation");

@@ -46,7 +46,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   }
   const sidebarOpen = (await cookies()).get("sidebar_state")?.value !== "false";
   const worker = await getWorkerStatus(supabase);
-  const [{ count: received }, { count: myReviews }] = await Promise.all([
+  const [{ count: received }, { count: myReviews }, { data: activeJobs }] = await Promise.all([
     supabase.from("referral_cases").select("id", { count: "exact", head: true }).eq("referral_status", "received"),
     can(role, "review")
       ? supabase
@@ -55,12 +55,15 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
           .neq("review_status", "completed")
           .or(`assigned_to.is.null,assigned_to.eq.${user.id}`)
       : Promise.resolve({ count: 0 }),
+    supabase.from("automation_jobs").select("status").in("status", ["queued", "running"]),
   ]);
+  const jobs = activeJobs ?? [];
+  const activeJobCounts = { queued: jobs.filter((j) => j.status === "queued").length, running: jobs.filter((j) => j.status === "running").length };
   const badges = { "/referrals": received ?? 0, "/reviews": myReviews ?? 0 };
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen}>
-      <AppSidebar userEmail={user.email ?? ""} fullName={fullName} role={role} badges={badges} />
+      <AppSidebar userEmail={user.email ?? ""} fullName={fullName} role={role} badges={badges} activeJobs={activeJobCounts} />
       <SidebarInset>
         <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <SidebarTrigger className="-ml-1" />

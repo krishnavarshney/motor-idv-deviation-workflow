@@ -3,7 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadWorkerConfig } from "./config";
 import type { DaemonDeps, ExecuteResult, Job } from "./daemon-core";
-import { createRun, emptyCounts, evaluateCases, fetchReferrals, finalizeRun, openSession, runReconcile } from "./pipeline";
+import { createRun, emptyCounts, evaluateCases, executeCorehubActions, fetchReferrals, finalizeRun, openSession, runReconcile } from "./pipeline";
 import { loadDecisionConfig } from "../server/idv-config";
 
 export function createDaemonDeps(supabase: SupabaseClient, workerId: string, execute: DaemonDeps["execute"]): DaemonDeps {
@@ -81,6 +81,13 @@ export function createDaemonDeps(supabase: SupabaseClient, workerId: string, exe
           .update({ status: "failed", finished_at: new Date().toISOString(), error_summary: "stale_heartbeat" })
           .eq("id", job.runId);
       }
+      // A CoreHub action cut off mid-run may or may not have been submitted: mark it failed with that
+      // warning so a person checks CoreHub before retrying (a retry re-checks the live status first).
+      await supabase
+        .from("corehub_actions")
+        .update({ status: "failed", error: "Worker stopped mid-action — check CoreHub before retrying", finished_at: new Date().toISOString() })
+        .eq("job_id", job.id)
+        .in("status", ["queued", "running"]);
       if (job.caseIds.length) {
         await supabase
           .from("referral_cases")
@@ -103,23 +110,28 @@ async function receivedCaseIds(supabase: SupabaseClient): Promise<string[]> {
 }
 
 export async function executeJob(supabase: SupabaseClient, job: Job): Promise<ExecuteResult> {
-  if (job.params.completion_mode !== "in_app") throw new Error("CoreHub write-back is not implemented");
+  // Scheduled runs can't write to CoreHub on their own; only person-confirmed corehub_action jobs do.
+  if (job.type !== "corehub_action" && job.params.completion_mode !== "in_app") throw new Error("CoreHub write-back runs only as confirmed corehub_action jobs");
 
   const config = loadWorkerConfig({ dryRun: job.params.dry_run, triggerSource: job.schedule_id ? "schedule" : "ui" });
   const runId = await createRun(supabase, config);
   await supabase.from("automation_jobs").update({ run_id: runId }).eq("id", job.id);
 
-  // `step` counts distinct checkpoints so the UI can show "Step n" without a fixed step list.
+  // `step` counts distinct checkpoints so the UI can show "Step n" without a fixed step list;
+  // `steps` keeps when each one started so the job page can draw a timeline.
+  const steps: { label: string; at: string }[] = [];
   let stepNo = 0;
-  let lastLabel = "";
   const progress = async (p: { current_step: string; done: number; total: number; case_ids?: string[] }) => {
-    if (p.current_step !== lastLabel) {
+    const at = new Date().toISOString();
+    if (p.current_step !== steps.at(-1)?.label) {
       stepNo++;
-      lastLabel = p.current_step;
+      steps.push({ label: p.current_step, at });
+      // ponytail: per-referral steps can be many; keep the latest 40, first ones are the least interesting.
+      if (steps.length > 40) steps.splice(0, steps.length - 40);
     }
     await supabase
       .from("automation_jobs")
-      .update({ progress: { ...p, step: stepNo }, heartbeat_at: new Date().toISOString() })
+      .update({ progress: { ...p, step: stepNo, steps }, heartbeat_at: at })
       .eq("id", job.id);
   };
 
@@ -142,7 +154,20 @@ export async function executeJob(supabase: SupabaseClient, job: Job): Promise<Ex
     const s = opened.session;
 
     let caseIds: string[] = [];
-    if (job.type === "fetch") {
+    if (job.type === "corehub_action") {
+      const ids = job.params.action_ids ?? [];
+      // Case ids in progress let the job page list the referrals being actioned.
+      const { data: acts } = await supabase.from("corehub_actions").select("case_id").in("id", ids);
+      const actionCaseIds = (acts ?? []).map((x) => x.case_id as string);
+      await progress({ current_step: "Opening CoreHub", done: 0, total: ids.length, case_ids: actionCaseIds });
+      const done = await executeCorehubActions(s, ids, (d, total, label) =>
+        progress({ current_step: label, done: d, total, case_ids: actionCaseIds }),
+      );
+      counts.casesDiscovered = ids.length;
+      counts.casesProcessed = done.casesProcessed;
+      counts.casesErrored = done.casesErrored;
+      counts.errors.push(...done.errors);
+    } else if (job.type === "fetch") {
       const fetched = await fetchReferrals(s, (label, done = 0, total = 0) => progress({ current_step: label, done, total }));
       counts.casesDiscovered = fetched.discovered;
       counts.casesNew = fetched.newCaseIds.length;

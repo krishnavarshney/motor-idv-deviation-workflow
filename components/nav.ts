@@ -21,7 +21,7 @@ export const NAV = [
   {
     label: "Admin",
     items: [
-      { title: "Decision rules", href: "/admin/rules", icon: SlidersHorizontal, action: "manage" },
+      { title: "Settings", href: "/admin/settings", icon: SlidersHorizontal, action: "manage" },
       { title: "Team", href: "/admin/team", icon: Users, action: "manage" },
       { title: "Audit log", href: "/audit", icon: FileClock, action: "audit" },
     ],
