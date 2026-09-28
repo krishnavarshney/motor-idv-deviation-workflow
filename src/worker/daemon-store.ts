@@ -109,17 +109,21 @@ export async function executeJob(supabase: SupabaseClient, job: Job): Promise<Ex
   const runId = await createRun(supabase, config);
   await supabase.from("automation_jobs").update({ run_id: runId }).eq("id", job.id);
 
-  // `step` counts distinct checkpoints so the UI can show "Step n" without a fixed step list.
+  // `step` counts distinct checkpoints so the UI can show "Step n" without a fixed step list;
+  // `steps` keeps when each one started so the job page can draw a timeline.
+  const steps: { label: string; at: string }[] = [];
   let stepNo = 0;
-  let lastLabel = "";
   const progress = async (p: { current_step: string; done: number; total: number; case_ids?: string[] }) => {
-    if (p.current_step !== lastLabel) {
+    const at = new Date().toISOString();
+    if (p.current_step !== steps.at(-1)?.label) {
       stepNo++;
-      lastLabel = p.current_step;
+      steps.push({ label: p.current_step, at });
+      // ponytail: per-referral steps can be many; keep the latest 40, first ones are the least interesting.
+      if (steps.length > 40) steps.splice(0, steps.length - 40);
     }
     await supabase
       .from("automation_jobs")
-      .update({ progress: { ...p, step: stepNo }, heartbeat_at: new Date().toISOString() })
+      .update({ progress: { ...p, step: stepNo, steps }, heartbeat_at: at })
       .eq("id", job.id);
   };
 
